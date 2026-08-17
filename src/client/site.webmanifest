@@ -1,0 +1,17 @@
+{
+  "name": "FluxTransfer Official — Fast P2P File Sharing",
+  "short_name": "FluxTransfer",
+  "description": "Fast peer-to-peer (P2P) file transfer website. Transfer large files instantly between devices with direct encryption.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0D1512",
+  "theme_color": "#0D1512",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

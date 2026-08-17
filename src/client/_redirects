@@ -1,0 +1,2 @@
+# Netlify HTTPS enforcement
+http://fluxtransfer.netlify.app/*  https://fluxtransfer.netlify.app/:splat  301!

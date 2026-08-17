@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="128" fill="#0D1512"/>
+  <!-- Minimalist Geometric Flux Chevrons -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Forward Stream Arrow (Emerald) -->
+    <path d="M140 210 L300 210 L370 210 M310 160 L370 210 L310 260" stroke="#6FA8A0" stroke-width="36"/>
+    
+    <!-- Reverse Stream Arrow (Amber) -->
+    <path d="M372 302 L212 302 L142 302 M202 352 L142 302 L202 252" stroke="#E8A33D" stroke-width="36"/>
+  </g>
+</svg>

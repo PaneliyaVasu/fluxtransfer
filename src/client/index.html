@@ -1,0 +1,2311 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO Meta Tags -->
+  <title>FluxTransfer — Free P2P Encrypted File Sharing</title>
+  <meta name="description"
+    content="Transfer any file instantly between devices — no signup, no cloud, no size limit. Direct P2P + AES-256 encryption. Free. Works on any browser.">
+  <meta name="keywords"
+    content="FluxTransfer, Flux Transfer, FluxTransfer app, FluxTransfer web, Flux Transfer website, transfer, file transfer, transfer website, fast file transfer, p2p file transfer, share large files online, send big files free, AirDrop alternative, AirDrop for Android, online file sharing">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="author" content="FluxTransfer">
+  <meta name="application-name" content="FluxTransfer">
+  <meta name="theme-color" content="#0D1512">
+
+  <!-- Search Engine Verification & Favicons -->
+  <meta name="google-site-verification" content="_kgs_RNztd1VwO9z299tsZZVBtjPjZSXEdIkyIltHo0" />
+  <link rel="canonical" href="https://fluxtransfer.netlify.app/">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="apple-touch-icon" href="/icon.svg">
+  <link rel="manifest" href="/site.webmanifest">
+
+  <!-- Open Graph / Facebook / WhatsApp Meta Tags -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://fluxtransfer.netlify.app/">
+  <meta property="og:title" content="FluxTransfer™ Official Site — Fast P2P File Transfer">
+  <meta property="og:description"
+    content="Official FluxTransfer Web App. Transfer large files instantly between any devices. Direct peer-to-peer encryption, zero file size limits, maximum Wi-Fi speed.">
+  <meta property="og:image" content="https://fluxtransfer.netlify.app/og-image.png">
+  <meta property="og:site_name" content="FluxTransfer">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="https://fluxtransfer.netlify.app/">
+  <meta name="twitter:title" content="FluxTransfer™ Official Site — Fast P2P File Transfer">
+  <meta name="twitter:description"
+    content="Official FluxTransfer Web App. Transfer large files instantly between any devices with direct P2P encryption.">
+  <meta name="twitter:image" content="https://fluxtransfer.netlify.app/og-image.png">
+
+  <!-- JSON-LD Structured Data Schema for Google Search -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebApplication",
+      "@id": "https://fluxtransfer.netlify.app/#webapp",
+      "url": "https://fluxtransfer.netlify.app/",
+      "name": "FluxTransfer",
+      "alternateName": ["Flux Transfer", "FluxTransfer App", "FluxTransfer Web"],
+      "image": "https://fluxtransfer.netlify.app/og-image.png",
+      "logo": "https://fluxtransfer.netlify.app/icon.svg",
+      "applicationCategory": "UtilitiesApplication",
+      "applicationSubCategory": "FileTransfer",
+      "operatingSystem": "Windows, macOS, Linux, Android, ChromeOS",
+      "browserRequirements": "Requires JavaScript and WebRTC support",
+      "softwareVersion": "2.0",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "description": "Free peer-to-peer encrypted file transfer — no account required"
+      },
+      "featureList": [
+        "No file size limit",
+        "AES-256-GCM end-to-end encryption",
+        "No account or signup required",
+        "Direct P2P WebRTC streaming",
+        "QR code session pairing",
+        "Reliable WebRTC data transfer",
+        "Works on all browsers and operating systems"
+      ],
+      "screenshot": "https://fluxtransfer.netlify.app/og-image.png",
+      "description": "FluxTransfer is a free peer-to-peer encrypted file sharing web app. Send files of any size directly between devices with no cloud storage, no signup, and AES-256-GCM encryption.",
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.9",
+        "reviewCount": "128",
+        "bestRating": "5"
+      }
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://fluxtransfer.netlify.app/#website",
+      "url": "https://fluxtransfer.netlify.app/",
+      "name": "FluxTransfer",
+      "alternateName": ["Flux Transfer", "FluxTransfer App", "FluxTransfer Web"],
+      "publisher": {
+        "@type": "Organization",
+        "@id": "https://fluxtransfer.netlify.app/#organization",
+        "name": "FluxTransfer",
+        "url": "https://fluxtransfer.netlify.app/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://fluxtransfer.netlify.app/og-image.png",
+          "width": 512,
+          "height": 512
+        },
+        "image": "https://fluxtransfer.netlify.app/og-image.png"
+      }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://fluxtransfer.netlify.app/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is there a file size limit on FluxTransfer?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No file size limit. FluxTransfer uses direct peer-to-peer WebRTC streaming — you can send files of any size (GB or TB) without any cloud cap."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need to create an account to use FluxTransfer?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No account or signup required. Open the site, pick a file, share the 4-digit code or QR code with the receiver — done."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is FluxTransfer secure and private?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Files are encrypted with AES-256-GCM end-to-end and stream directly between your devices via WebRTC. No file storage server is used for normal transfers."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How fast is FluxTransfer?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "FluxTransfer uses Internet P2P WebRTC. Transfer speed depends on the sender and receiver networks."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+
+
+  <!-- Fonts with local fallback -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    rel="stylesheet">
+
+  <!-- External CDNs -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="/p2p-engine.js"></script>
+
+  <style>
+    :root {
+      --bg: #0D1512;
+      --panel: #16211C;
+      --panel-raised: #1C2921;
+      --line: #24332B;
+      --amber: #E8A33D;
+      --amber-dim: #8C6A2E;
+      --sage: #6FA8A0;
+      --sage-dim: #3E5C57;
+      --text: #EDEAE2;
+      --text-muted: #8A9691;
+      --error: #D9695F;
+      --font-display: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+      --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', Consolas, monospace;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      padding: 32px 20px 60px;
+      background-image:
+        radial-gradient(circle at 15% 10%, rgba(232, 163, 61, 0.06), transparent 40%),
+        radial-gradient(circle at 85% 90%, rgba(111, 168, 160, 0.07), transparent 40%);
+    }
+
+    .wrap {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    /* ─── Header ─── */
+    header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    h1.wordmark {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    h1.wordmark .brand-logo-img {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      vertical-align: middle;
+      filter: drop-shadow(0 0 10px rgba(111, 168, 160, 0.4));
+      transition: transform 0.25s ease;
+    }
+
+    h1.wordmark:hover .brand-logo-img {
+      transform: scale(1.08) rotate(5deg);
+    }
+
+    .tagline {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-top: 6px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.02em;
+    }
+
+    /* Local IP Badge */
+    .ip-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--sage);
+      margin-top: 10px;
+    }
+
+    /* ─── Mode Badge (Solution B) ─── */
+    .mode-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      margin-top: 14px;
+      text-align: center;
+      transition: all 0.3s;
+    }
+
+    .mode-badge.wifi-direct {
+      background: rgba(111, 168, 160, 0.12);
+      border: 1px solid var(--sage);
+      color: var(--sage);
+    }
+
+    .mode-badge.web-relay {
+      background: rgba(232, 163, 61, 0.12);
+      border: 1px solid var(--amber-dim);
+      color: var(--amber);
+    }
+
+    /* ─── Radar ─── */
+    .radar {
+      width: 150px;
+      height: 150px;
+      margin: 0 auto 24px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .radar-ring {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid var(--line);
+    }
+
+    .radar-ring.r1 {
+      width: 100%;
+      height: 100%;
+    }
+
+    .radar-ring.r2 {
+      width: 70%;
+      height: 70%;
+    }
+
+    .radar-ring.r3 {
+      width: 40%;
+      height: 40%;
+    }
+
+    .radar-core {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--amber-dim);
+      z-index: 2;
+      transition: background 0.4s, box-shadow 0.4s;
+    }
+
+    .radar-core.active {
+      background: var(--amber);
+      box-shadow: 0 0 18px var(--amber);
+    }
+
+    .radar-core.connected {
+      background: var(--sage);
+      box-shadow: 0 0 18px var(--sage);
+    }
+
+    .radar-core.error {
+      background: var(--error);
+      box-shadow: 0 0 18px var(--error);
+    }
+
+    .pulse {
+      position: absolute;
+      border-radius: 50%;
+      border: 1px solid var(--amber);
+      opacity: 0;
+      width: 14px;
+      height: 14px;
+    }
+
+    .pulse.on {
+      animation: pulse-out 2.2s ease-out infinite;
+    }
+
+    .pulse.on.p2 {
+      animation-delay: 0.7s;
+    }
+
+    .pulse.on.p3 {
+      animation-delay: 1.4s;
+    }
+
+    .pulse.connected {
+      border-color: var(--sage);
+    }
+
+    .pulse.error {
+      border-color: var(--error);
+    }
+
+    @keyframes pulse-out {
+      0% {
+        width: 14px;
+        height: 14px;
+        opacity: 0.7;
+      }
+
+      100% {
+        width: 150px;
+        height: 150px;
+        opacity: 0;
+      }
+    }
+
+    /* ─── Status ─── */
+    .status-line {
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      min-height: 18px;
+      margin-bottom: 24px;
+      letter-spacing: 0.02em;
+    }
+
+    .status-line.err {
+      color: var(--error);
+    }
+
+    .status-line.ok {
+      color: var(--sage);
+    }
+
+    /* ─── Alert Box ─── */
+    .alert-box {
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 18px;
+      text-align: center;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .alert-box.success {
+      background: rgba(111, 168, 160, 0.12);
+      border: 1px solid var(--sage);
+      color: var(--sage);
+    }
+
+    .alert-box.error {
+      background: rgba(217, 105, 95, 0.12);
+      border: 1px solid var(--error);
+      color: var(--error);
+    }
+
+    .alert-box button {
+      background: var(--panel-raised);
+      border: 1px solid var(--line);
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .alert-box button:hover {
+      background: var(--panel);
+      border-color: var(--text);
+    }
+
+    /* ─── Tabs ─── */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 4px;
+      margin-bottom: 20px;
+    }
+
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 10px 0;
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 14px;
+      color: var(--text-muted);
+      border-radius: 7px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      background: var(--panel-raised);
+      color: var(--text);
+    }
+
+    /* ─── Discovered Devices Radar List ─── */
+    .devices-box {
+      background: var(--panel-raised);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 18px;
+    }
+
+    .devices-title {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .device-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .device-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .device-item:hover {
+      border-color: var(--sage-dim);
+      background: rgba(111, 168, 160, 0.06);
+    }
+
+    .device-name {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .device-ip {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .device-btn {
+      background: var(--sage-dim);
+      color: var(--text);
+      border: none;
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+    }
+
+    /* ─── Panel ─── */
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 28px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* ─── Drop zone ─── */
+    .drop {
+      border: 1.5px dashed var(--line);
+      border-radius: 10px;
+      padding: 32px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .drop:hover,
+    .drop.drag {
+      border-color: var(--amber-dim);
+      background: rgba(232, 163, 61, 0.03);
+    }
+
+    .drop-label {
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .drop-sub {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    input[type=file] {
+      display: none;
+    }
+
+    /* ─── File chip ─── */
+    .file-chip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--panel-raised);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-top: 16px;
+    }
+
+    .file-chip .name {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 340px;
+    }
+
+    .file-chip .size {
+      color: var(--text-muted);
+      font-size: 11px;
+      font-family: var(--font-mono);
+      margin-left: 12px;
+      flex-shrink: 0;
+    }
+
+    /* ─── Code + QR display ─── */
+    .code-qr-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      margin: 22px 0;
+      flex-wrap: wrap;
+    }
+
+    .code-block {
+      text-align: center;
+    }
+
+    .code-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 8px;
+    }
+
+    .code-value {
+      font-family: var(--font-mono);
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: var(--amber);
+    }
+
+    .code-hint {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      margin-top: 6px;
+    }
+
+    .qr-wrap {
+      background: #fff;
+      border-radius: 10px;
+      padding: 10px;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-width: 130px;
+    }
+
+    .qr-box {
+      width: 120px;
+      height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .qr-box canvas,
+    .qr-box img {
+      display: block;
+      border-radius: 4px;
+      max-width: 100%;
+    }
+
+    .qr-label-inside {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      color: #555;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ─── Receive code input ─── */
+    .code-input-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+    }
+
+    .code-input {
+      flex: 1;
+      background: var(--panel-raised);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 20px;
+      letter-spacing: 0.15em;
+      text-align: center;
+      padding: 12px;
+      text-transform: uppercase;
+    }
+
+    .code-input:focus {
+      outline: none;
+      border-color: var(--sage-dim);
+    }
+
+    .scan-btn-wrap {
+      margin-top: 12px;
+    }
+
+    button.scan-btn {
+      width: 100%;
+      background: var(--panel-raised);
+      border: 1px dashed var(--sage);
+      color: var(--sage);
+      border-radius: 8px;
+      padding: 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+
+    button.scan-btn:hover {
+      background: rgba(111, 168, 160, 0.1);
+      border-style: solid;
+    }
+
+    /* Scanner modal */
+    .scanner-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(13, 21, 18, 0.92);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .scanner-box {
+      width: 100%;
+      max-width: 340px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid var(--sage);
+      background: #000;
+    }
+
+    .scanner-title {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 14px;
+    }
+
+    /* ─── Buttons ─── */
+    button.primary {
+      width: 100%;
+      margin-top: 16px;
+      background: var(--amber);
+      color: #1a1206;
+      border: none;
+      border-radius: 8px;
+      padding: 13px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      transition: filter 0.2s, opacity 0.2s;
+    }
+
+    button.primary:hover {
+      filter: brightness(1.08);
+    }
+
+    button.primary:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    button.ghost {
+      width: 100%;
+      margin-top: 10px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px;
+      font-family: var(--font-body);
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    button.ghost:hover {
+      border-color: var(--sage-dim);
+      color: var(--text);
+    }
+
+    /* ─── Progress ─── */
+    .progress-wrap {
+      margin-top: 22px;
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      background: var(--panel-raised);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--sage-dim), var(--sage));
+      transition: width 0.15s linear;
+      border-radius: 6px;
+    }
+
+    .progress-stats {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    .progress-size {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 5px;
+      text-align: center;
+      letter-spacing: 0.02em;
+    }
+
+    .progress-size .sent-val {
+      color: var(--sage);
+      font-weight: 500;
+    }
+
+    .progress-size .total-val {
+      opacity: 0.7;
+    }
+
+    .progress-size .remaining-val {
+      color: var(--amber-dim);
+    }
+
+    /* ─── Transfer History Styles ─── */
+
+    .history-section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+      margin-top: 20px;
+    }
+
+    .history-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .history-header h3 {
+      font-size: 13px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .history-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 10px;
+      background: var(--panel-raised);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+
+    .history-info {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .history-name {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .history-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .history-badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      background: rgba(111, 168, 160, 0.15);
+      color: var(--sage);
+    }
+
+    .ghost-sm {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .ghost-sm:hover {
+      color: var(--error);
+    }
+
+    /* ─── Log ─── */
+    .log {
+      margin-top: 20px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+      max-height: 140px;
+      overflow-y: auto;
+    }
+
+    .log div {
+      padding: 2px 0;
+    }
+
+    .log div.done {
+      color: var(--sage);
+    }
+
+    .log div.err {
+      color: var(--error);
+    }
+
+    /* ─── SEO Text & FAQ Section ─── */
+    .seo-section {
+      margin-top: 40px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 24px;
+    }
+
+    .seo-section h2 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    .seo-section p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 14px;
+    }
+
+    .seo-features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .feature-card {
+      background: var(--panel-raised);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .feature-card h3 {
+      font-size: 13px;
+      font-family: var(--font-display);
+      color: var(--sage);
+      margin-bottom: 4px;
+    }
+
+    .feature-card p {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 30px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      opacity: 0.6;
+    }
+
+    /* ─── Premium Monetization Side Banner Ad Slots ─── */
+    .ad-slot-side {
+      position: fixed;
+      top: 80px;
+      width: 200px;
+      height: 600px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 10px;
+      text-align: center;
+      box-sizing: border-box;
+      z-index: 90;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: space-between;
+      transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .ad-slot-side.left {
+      left: 20px;
+    }
+
+    .ad-slot-side.right {
+      right: 20px;
+    }
+
+    .ad-slot-side:hover {
+      border-color: var(--amber-dim);
+      background: var(--panel-raised);
+      box-shadow: 0 0 20px rgba(232, 163, 61, 0.12);
+      transform: translateY(-3px);
+    }
+
+    .ad-label {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      display: block;
+    }
+
+    .ad-banner-img {
+      width: 100%;
+      height: 380px;
+      object-fit: cover;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+
+    .ad-placeholder-side {
+      flex: 1;
+      width: 100%;
+      margin: 10px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--sage);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 10px 6px;
+      background: rgba(111, 168, 160, 0.03);
+    }
+
+    .ad-placeholder-side .ad-icon {
+      font-size: 32px;
+    }
+
+    .ad-placeholder-side .ad-title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--amber);
+      margin-bottom: 2px;
+    }
+
+    .ad-placeholder-side .ad-text {
+      font-size: 10px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .ad-cta-btn {
+      width: 100%;
+      background: var(--amber);
+      color: #1a1206;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 4px;
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 11px;
+      cursor: pointer;
+      transition: filter 0.2s;
+      pointer-events: none;
+      /* Container itself handles click */
+    }
+
+    @media (max-width: 1100px) {
+      .ad-slot-side {
+        display: none;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <header>
+      <h1 class="wordmark"><img src="/icon.svg" alt="FluxTransfer Logo" class="brand-logo-img">FluxTransfer</h1>
+      <div class="tagline">Fast P2P File Transfer Website · Direct Peer Data Stream</div>
+      <div class="ip-badge hidden" id="ipBadge">📡 Internet P2P Active: <span id="myIp">--</span></div>
+    </header>
+
+    <!-- ═══ LEFT & RIGHT MONETIZATION AD BANNERS (Skyscraper format) ═══ -->
+    <a class="ad-slot-side left" id="adSlotLeft" href="https://fluxtransfer.netlify.app" target="_blank" rel="noopener">
+      <span class="ad-label">Sponsored</span>
+      <div class="ad-placeholder-side">
+        <img src="/ad-left.png" alt="Ultra Fast P2P Ad" class="ad-banner-img">
+        <span class="ad-title">Ultra Fast P2P</span>
+        <span class="ad-text">Transfer files at full Wi-Fi speeds without cloud limits.</span>
+      </div>
+      <button class="ad-cta-btn">Learn More</button>
+    </a>
+
+    <a class="ad-slot-side right" id="adSlotRight" href="https://fluxtransfer.netlify.app" target="_blank"
+      rel="noopener">
+      <span class="ad-label">Advertisement</span>
+      <div class="ad-placeholder-side">
+        <img src="/ad-right.png" alt="AES-256 E2EE Ad" class="ad-banner-img">
+        <span class="ad-title">AES-256 E2EE</span>
+        <span class="ad-text">Your files are not stored by FluxTransfer. Transfer payloads use encrypted WebRTC.</span>
+      </div>
+      <button class="ad-cta-btn">Try Premium</button>
+    </a>
+
+    <main>
+      <div class="radar" id="radarEl">
+        <div class="radar-ring r1"></div>
+        <div class="radar-ring r2"></div>
+        <div class="radar-ring r3"></div>
+        <div class="pulse p1" id="pulse1"></div>
+        <div class="pulse p2" id="pulse2"></div>
+        <div class="pulse p3" id="pulse3"></div>
+        <div class="radar-core" id="radarCore"></div>
+      </div>
+
+      <div class="status-line" id="statusLine">idle — choose send or receive</div>
+
+      <!-- Success / Disconnect Alert Banner -->
+      <div class="alert-box hidden" id="alertBanner">
+        <span id="alertMsg"></span>
+        <button id="alertResetBtn">🔄 Send Another File</button>
+      </div>
+
+      <!-- Discovered Wi-Fi Peer Radar -->
+      <div class="devices-box hidden" id="devicesBox">
+        <div class="devices-title">
+          <span>Discovered Nearby Wi-Fi Devices</span>
+          <span id="deviceCount">0 found</span>
+        </div>
+        <div class="device-list" id="deviceList"></div>
+      </div>
+
+      <div class="tabs">
+        <div class="tab active" id="tabSend">Send File</div>
+        <div class="tab" id="tabReceive">Receive File</div>
+      </div>
+
+      <!-- ═══ SEND PANEL ═══ -->
+      <div class="panel" id="sendPanel">
+        <div class="drop" id="dropZone">
+          <div class="drop-label">Choose files or folder to transfer</div>
+          <div class="drop-sub">or drag &amp; drop files / folders here</div>
+          <input type="file" id="fileInput" multiple>
+        </div>
+
+        <div class="file-chip hidden" id="fileChip">
+          <span class="name" id="fileName"></span>
+          <span class="size" id="fileSize"></span>
+        </div>
+
+        <!-- Code + QR shown after peer is ready -->
+        <div class="code-qr-row hidden" id="sendCodeBox">
+          <div class="code-block">
+            <div class="code-label">share this code</div>
+            <div class="code-value" id="sendCode">——</div>
+            <div class="code-hint">or scan the QR →</div>
+          </div>
+          <div class="qr-wrap" id="qrWrap">
+            <div class="qr-box" id="qrBox"></div>
+            <div class="qr-label-inside">scan to receive</div>
+          </div>
+        </div>
+
+        <button class="primary" id="startSendBtn" disabled>Generate code &amp; QR</button>
+        <button class="ghost hidden" id="cancelSendBtn">Cancel</button>
+
+        <div class="progress-wrap hidden" id="sendProgressWrap">
+          <div class="progress-meta"><span>Sending</span><span id="sendPct">0%</span></div>
+          <div class="progress-track">
+            <div class="progress-fill" id="sendFill"></div>
+          </div>
+          <div class="progress-size" id="sendSizeLine">
+            <span class="sent-val" id="sendSent">0 B</span>
+            <span class="total-val"> of </span>
+            <span class="total-val" id="sendTotal">--</span>
+            <span style="margin: 0 6px; opacity:0.4">·</span>
+            <span class="remaining-val" id="sendRemaining">-- remaining</span>
+          </div>
+          <div class="progress-stats"><span id="sendSpeed">0 MB/s</span><span id="sendEta">--</span></div>
+          <!-- Mode Badge (Solution B) -->
+          <div class="mode-badge hidden" id="sendModeBadge"></div>
+        </div>
+      </div>
+
+      <!-- ═══ RECEIVE PANEL ═══ -->
+      <div class="panel hidden" id="receivePanel">
+        <div class="code-label" style="text-align:center;margin-bottom:10px;">enter the sender's code</div>
+        <div class="code-input-row">
+          <input class="code-input" id="codeInput" maxlength="4" placeholder="——" autocomplete="off" spellcheck="false">
+        </div>
+
+        <div class="scan-btn-wrap">
+          <button class="scan-btn" id="startScannerBtn">
+            <span>📷 Scan QR with Camera</span>
+          </button>
+        </div>
+
+        <button class="primary" id="connectBtn">Connect</button>
+        <button class="ghost hidden" id="cancelReceiveBtn">Cancel</button>
+
+
+        <div class="progress-wrap hidden" id="recvProgressWrap">
+          <div class="progress-meta"><span id="recvFileName">Receiving</span><span id="recvPct">0%</span></div>
+          <div class="progress-track">
+            <div class="progress-fill" id="recvFill"></div>
+          </div>
+          <div class="progress-size" id="recvSizeLine">
+            <span class="sent-val" id="recvReceived">0 B</span>
+            <span class="total-val"> of </span>
+            <span class="total-val" id="recvTotal">--</span>
+            <span style="margin: 0 6px; opacity:0.4">·</span>
+            <span class="remaining-val" id="recvRemaining">-- remaining</span>
+          </div>
+          <div class="progress-stats"><span id="recvSpeed">0 MB/s</span><span id="recvEta">--</span></div>
+          <!-- Mode Badge (Solution B) -->
+          <div class="mode-badge hidden" id="recvModeBadge"></div>
+        </div>
+      </div>
+
+
+
+      <!-- ═══ TRANSFER HISTORY SECTION ═══ -->
+      <div class="history-section hidden" id="historySection">
+        <div class="history-header">
+          <h3>📋 Recent Transfer History</h3>
+          <button class="ghost-sm" id="clearHistoryBtn">Clear Log</button>
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </div>
+
+      <!-- ═══ SEO Content Section for Search Engines ═══ -->
+      <article class="seo-section">
+        <h2>The Fastest Peer-to-Peer File Transfer Website</h2>
+        <p>FluxTransfer is a high-speed online file transfer tool designed for instant, zero-cloud file sharing between
+          Android, Windows, and Mac devices. Transfer large video files, photos, documents, and archives
+          directly with no file size limits.</p>
+
+        <div class="seo-features">
+          <div class="feature-card">
+            <h3>⚡ Maximum Speed P2P</h3>
+            <p>Streams files directly between browsers over encrypted Internet P2P WebRTC.</p>
+          </div>
+          <div class="feature-card">
+            <h3>🔒 100% Private &amp; Secure</h3>
+            <p>End-to-end encrypted streams. FluxTransfer does not store transfer payloads.</p>
+          </div>
+          <div class="feature-card">
+            <h3>📱 Cross-Platform</h3>
+            <p>Works seamlessly on Android, Windows, macOS, Linux, and Smart TVs.</p>
+          </div>
+        </div>
+      </article>
+    </main>
+
+    <footer>Internet P2P WebRTC · zero cloud file storage · E2E encrypted</footer>
+  </div>
+
+  <!-- Camera Scanner Modal -->
+  <div class="scanner-modal hidden" id="scannerModal">
+    <div class="scanner-title">Point camera at sender's QR code</div>
+    <div class="scanner-box" id="scannerBox"></div>
+    <button class="ghost" id="closeScannerBtn" style="max-width: 200px; margin-top: 16px;">Cancel Scan</button>
+  </div>
+
+  <script>
+    // ─── Shared FluxEngine instance from /p2p-engine.js ───────────────────────
+
+    // ─── High-Speed Performance Config ───────────────────────
+    const PEER_CONFIG = {
+      host: '0.peerjs.com',
+      port: 443,
+      path: '/',
+      secure: true,
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' },
+          { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:openrelay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turns:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
+        ],
+        iceCandidatePoolSize: 10,
+        sdpSemantics: 'unified-plan'
+      }
+    };
+
+    // ─── State ────────────────────────────────────────────────
+    let mode = 'send';
+    let peer = null;
+    let conn = null;
+    let peerConnections = [];
+    const STREAM_COUNT = 6;
+    const STREAM_READY_TIMEOUT_MS = 20000;
+    let selectedFile = null;
+    let sessionCode = null;
+    let qrScanner = null;
+    let transferActive = false;
+    let transferFinished = false;
+    let fluxEngine = new FluxEngine();
+    let activeDownloadUrl = null;
+
+    // ─── DOM helpers ──────────────────────────────────────────
+    const $ = id => document.getElementById(id);
+    const log = (msg, cls = '') => {
+      console.log('› ' + msg);
+    };
+    const setStatus = (text, cls = '') => {
+      const s = $('statusLine');
+      if (s) { s.textContent = text; s.className = 'status-line' + (cls ? ' ' + cls : ''); }
+    };
+    const setRadar = state => {
+      const core = $('radarCore');
+      const pulses = [$('pulse1'), $('pulse2'), $('pulse3')];
+      if (!core) return;
+      core.className = 'radar-core';
+      pulses.forEach(p => { if (p) p.className = 'pulse ' + p.id.replace('pulse', 'p'); });
+      if (state === 'active') {
+        core.classList.add('active');
+        pulses.forEach((p, i) => { if (p) p.classList.add('on', 'p' + (i + 1)); });
+      } else if (state === 'connected') {
+        core.classList.add('connected');
+        pulses.forEach((p, i) => { if (p) p.classList.add('on', 'connected', 'p' + (i + 1)); });
+      } else if (state === 'error') {
+        core.classList.add('error');
+        pulses.forEach((p, i) => { if (p) p.classList.add('on', 'error', 'p' + (i + 1)); });
+      }
+    };
+
+    // ─── UI Alert / Banner Controller ─────────────────────────
+    let autoResetTimer = null;
+
+    function showAlert(message, type = 'success', buttonLabel = '🔄 Send Another File') {
+      const banner = $('alertBanner');
+      const msgEl = $('alertMsg');
+      const btnEl = $('alertResetBtn');
+
+      if (autoResetTimer) {
+        clearInterval(autoResetTimer);
+        autoResetTimer = null;
+      }
+
+      banner.className = `alert-box ${type}`;
+      msgEl.textContent = message;
+      btnEl.textContent = buttonLabel;
+      banner.classList.remove('hidden');
+
+      if (type === 'success') {
+        let countdown = 5;
+        btnEl.textContent = `${buttonLabel} (${countdown}s auto-reset)`;
+        autoResetTimer = setInterval(() => {
+          countdown--;
+          if (countdown <= 0) {
+            clearInterval(autoResetTimer);
+            autoResetTimer = null;
+            log('auto-resetting screen for new transfer…');
+            resetAll();
+          } else {
+            btnEl.textContent = `${buttonLabel} (${countdown}s auto-reset)`;
+          }
+        }, 1000);
+      }
+    }
+
+    function hideAlert() {
+      if (autoResetTimer) {
+        clearInterval(autoResetTimer);
+        autoResetTimer = null;
+      }
+      $('alertBanner').classList.add('hidden');
+    }
+
+    $('alertResetBtn').onclick = () => {
+      if (autoResetTimer) {
+        clearInterval(autoResetTimer);
+        autoResetTimer = null;
+      }
+      resetAll();
+    };
+
+    // ─── Format helpers ───────────────────────────────────────
+    const fmtBytes = n => {
+      if (n < 1024) return n + ' B';
+      if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+      if (n < 1024 ** 3) return (n / 1024 / 1024).toFixed(2) + ' MB';
+      return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+    };
+    const fmtEta = sec => {
+      if (!isFinite(sec) || sec < 0) return '--';
+      if (sec < 60) return Math.ceil(sec) + 's left';
+      return Math.floor(sec / 60) + 'm ' + Math.ceil(sec % 60) + 's left';
+    };
+
+    // ─── Internet WebRTC Mode Badge ───────────────────────────
+    function updateModeBadge(elementId) {
+      const badge = $(elementId);
+      if (!badge) return;
+      badge.className = 'mode-badge web-relay';
+      badge.innerHTML = '🌐 Mode: Internet P2P WebRTC';
+      badge.classList.remove('hidden');
+    }
+
+    // ─── Code generator ───────────────────────────────────────
+    const genCode = () => {
+      const values = new Uint32Array(1);
+      do { window.crypto.getRandomValues(values); } while (values[0] >= 4290000000);
+      return String(1000 + (values[0] % 9000));
+    };
+
+    // ─── Intelligent QR Code Generator ──────────────────────────
+    function renderQR(code) {
+      const container = $('qrBox');
+      if (!container) return;
+      container.innerHTML = '';
+
+      let content = code;
+      if (window.location.protocol.startsWith('http')) {
+        content = window.location.origin + window.location.pathname + '?code=' + code;
+      }
+
+      try {
+        if (typeof QRCode !== 'undefined') {
+          new QRCode(container, {
+            text: content,
+            width: 120,
+            height: 120,
+            colorDark: "#1a1206",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.M
+          });
+          return;
+        }
+      } catch (e) { }
+
+      container.textContent = 'QR library unavailable — share the transfer code manually.';
+    }
+
+    // ─── In-App Camera QR Scanner ─────────────────────────────
+    $('startScannerBtn').onclick = async () => {
+      if (typeof Html5Qrcode === 'undefined') {
+        setStatus('camera scanner library not loaded — please type code', 'err');
+        return;
+      }
+
+      await stopScanner();
+      $('scannerModal').classList.remove('hidden');
+      qrScanner = new Html5Qrcode("scannerBox");
+
+      qrScanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        (decodedText) => {
+          let code = decodedText.trim();
+          if (code.includes('code=')) {
+            try {
+              const urlParams = new URLSearchParams(code.split('?')[1]);
+              if (urlParams.has('code')) code = urlParams.get('code');
+            } catch (e) { }
+          }
+
+          code = code.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4);
+
+          if (code.length >= 4) {
+            $('codeInput').value = code;
+            log('QR scanned code: ' + code, 'done');
+            stopScanner();
+            $('connectBtn').click();
+          }
+        },
+        () => { }
+      ).catch(err => {
+        log('Camera error: ' + err, 'err');
+        setStatus('camera permission denied or unavailable', 'err');
+        stopScanner();
+      });
+    };
+
+    $('closeScannerBtn').onclick = () => stopScanner();
+
+    async function stopScanner() {
+      $('scannerModal').classList.add('hidden');
+
+      if (qrScanner) {
+        const scanner = qrScanner;
+        qrScanner = null;
+        try {
+          if (scanner.isScanning) {
+            await scanner.stop();
+          }
+        } catch (e) {
+          console.warn('QR scanner stop error:', e);
+        } finally {
+          try {
+            scanner.clear();
+          } catch (e) { }
+        }
+      }
+
+      // Explicitly stop camera stream tracks to turn off mobile camera hardware
+      try {
+        const box = $('scannerBox');
+        if (box) {
+          const videos = box.getElementsByTagName('video');
+          for (let i = 0; i < videos.length; i++) {
+            const stream = videos[i].srcObject;
+            if (stream && stream.getTracks) {
+              stream.getTracks().forEach(track => track.stop());
+            }
+            videos[i].srcObject = null;
+          }
+          box.innerHTML = '';
+        }
+      } catch (e) {
+        console.warn('Failed to force stop camera tracks:', e);
+      }
+    }
+
+    // ─── Tab switching ────────────────────────────────────────
+    $('tabSend').onclick = () => switchMode('send');
+    $('tabReceive').onclick = () => switchMode('receive');
+
+    function switchMode(m) {
+      mode = m;
+      $('tabSend').classList.toggle('active', m === 'send');
+      $('tabReceive').classList.toggle('active', m === 'receive');
+      $('sendPanel').classList.toggle('hidden', m !== 'send');
+      $('receivePanel').classList.toggle('hidden', m !== 'receive');
+      hideAlert();
+      setStatus('idle — ' + (m === 'send' ? 'choose a file to send' : 'enter a code to receive'));
+      setRadar('idle');
+    }
+
+    // ─── Multi-File & Folder Selection / Drag & Drop ──────────
+    $('dropZone').onclick = () => $('fileInput').click();
+    $('fileInput').onchange = e => {
+      if (e.target.files && e.target.files.length > 0) {
+        processFilesOrFolder(e.target.files);
+      }
+    };
+
+    $('dropZone').addEventListener('dragover', e => {
+      e.preventDefault(); $('dropZone').classList.add('drag');
+    });
+    $('dropZone').addEventListener('dragleave', () => $('dropZone').classList.remove('drag'));
+    $('dropZone').addEventListener('drop', async e => {
+      e.preventDefault(); $('dropZone').classList.remove('drag');
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+        await processFilesOrFolder(e.dataTransfer.items);
+      } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        await processFilesOrFolder(e.dataTransfer.files);
+      }
+    });
+
+    async function processFilesOrFolder(fileListOrItems) {
+      requestNotificationPermission();
+      let files = [];
+      if (fileListOrItems && fileListOrItems[0] && fileListOrItems[0].webkitGetAsEntry) {
+        for (let i = 0; i < fileListOrItems.length; i++) {
+          const entry = fileListOrItems[i].webkitGetAsEntry();
+          if (entry) {
+            const entryFiles = await traverseFileEntry(entry);
+            files.push(...entryFiles);
+          }
+        }
+      } else if (fileListOrItems instanceof FileList || Array.isArray(fileListOrItems)) {
+        files = Array.from(fileListOrItems);
+      }
+
+      if (files.length === 0) return;
+
+      if (files.length === 1 && !files[0].webkitRelativePath) {
+        handleFile(files[0]);
+      } else {
+        log(`bundling ${files.length} items into ZIP archive…`, 'done');
+        setStatus(`bundling ${files.length} items into ZIP archive…`);
+        try {
+          const folderName = files[0].webkitRelativePath ? files[0].webkitRelativePath.split('/')[0] + '.zip' : 'FluxTransfer_Bundle.zip';
+          const zipFile = await createZipBundle(files, folderName);
+          handleFile(zipFile);
+          log(`ZIP archive generated: ${zipFile.name} (${fmtBytes(zipFile.size)})`, 'done');
+          setStatus('folder / multi-files bundled ready to send ✓', 'ok');
+        } catch (err) {
+          log('ZIP bundling failed: ' + err.message, 'err');
+          setStatus('ZIP bundling failed', 'err');
+        }
+      }
+    }
+
+    async function traverseFileEntry(entry, path = '') {
+      const files = [];
+      if (entry.isFile) {
+        await new Promise((resolve) => {
+          entry.file(f => {
+            try {
+              Object.defineProperty(f, 'webkitRelativePath', { value: path + f.name, writable: false });
+            } catch (e) { }
+            files.push(f);
+            resolve();
+          });
+        });
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const entries = await new Promise(resolve => dirReader.readEntries(resolve));
+        for (const child of entries) {
+          const subFiles = await traverseFileEntry(child, path + entry.name + '/');
+          files.push(...subFiles);
+        }
+      }
+      return files;
+    }
+
+    function handleFile(f) {
+      if (!f) return;
+      selectedFile = f;
+      $('fileChip').classList.remove('hidden');
+      $('fileName').textContent = f.name;
+      $('fileSize').textContent = fmtBytes(f.size);
+      $('startSendBtn').disabled = false;
+      $('startSendBtn').textContent = 'Generate code & QR';
+      hideAlert();
+    }
+
+    // ─── SEND FLOW ────────────────────────────────────────────
+    $('startSendBtn').onclick = async () => {
+      if (!selectedFile) return;
+      if (!window.isSecureContext || !window.crypto?.subtle) {
+        setStatus('insecure context detected', 'err');
+        showAlert('⚠️ FluxTransfer requires HTTPS or localhost for secure WebRTC and encryption.', 'error', '🔄 Reset & Try Again');
+        $('startSendBtn').disabled = false;
+        $('startSendBtn').textContent = 'Generate code & QR';
+        return;
+      }
+
+      $('startSendBtn').disabled = true;
+      $('startSendBtn').textContent = 'Connecting to broker…';
+      setStatus('setting up peer connection…');
+      setRadar('active');
+      hideAlert();
+
+      destroyPeer();
+
+      sessionCode = genCode();
+      const displayCode = sessionCode;
+
+      try {
+        if (typeof Peer === 'undefined') {
+          throw new Error('PeerJS not available');
+        }
+
+        peer = new Peer('fluxtransfer_v3_' + sessionCode, PEER_CONFIG);
+
+        peer.on('error', err => {
+          if (err.type === 'unavailable-id') {
+            log('code collision — retrying…');
+            $('startSendBtn').disabled = false;
+            $('startSendBtn').textContent = 'Generate code & QR';
+            destroyPeer();
+            return;
+          }
+          log('peer error: ' + err.message, 'err');
+          setStatus('connection error', 'err');
+          setRadar('error');
+          showAlert('⚠️ Peer connection error', 'error', '🔄 Try Again');
+        });
+
+        peer.on('open', async id => {
+          log('peer ready — code: ' + displayCode);
+          $('sendCode').textContent = displayCode;
+          $('sendCodeBox').classList.remove('hidden');
+          $('startSendBtn').classList.add('hidden');
+          $('cancelSendBtn').classList.remove('hidden');
+
+          renderQR(displayCode);
+          setStatus('waiting for receiver — share the 4-digit code or scan QR');
+
+        });
+
+        const senderStreams = new Map();
+        let senderStarted = false;
+
+        const maybeStartSender = async (requestedIndices = null) => {
+          if (senderStarted) return;
+          const indices = requestedIndices ? [...new Set(requestedIndices.map(Number).filter(Number.isInteger))] : [0];
+          if (!indices.includes(0)) indices.unshift(0);
+
+          const deadline = Date.now() + STREAM_READY_TIMEOUT_MS;
+          while (Date.now() < deadline) {
+            const available = indices
+              .map(i => senderStreams.get(i))
+              .filter(c => c && c.open);
+            if (available.length === indices.length) {
+              senderStarted = true;
+              peerConnections = available;
+              conn = available[0];
+              transferActive = true;
+              transferFinished = false;
+              updateModeBadge('sendModeBadge');
+              setStatus(`transferring over Internet P2P (${available.length} parallel streams)…`, 'ok');
+              setRadar('connected');
+              $('sendProgressWrap').classList.remove('hidden');
+              log(`⚡ ${available.length} parallel Internet streams active ✓`, 'done');
+              sendFileHighSpeed(available);
+              return;
+            }
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+
+          // Diagnostics:
+          indices.forEach(i => {
+            const c = senderStreams.get(i);
+            const dc = c ? (c._dc || c.dataChannel) : null;
+            log(`Stream diagnostics [Index ${i}]: exists=${!!c}, open=${c?.open}, dc=${!!dc}, dc.readyState=${dc?.readyState}`, 'err');
+          });
+
+          const available = indices.map(i => senderStreams.get(i)).filter(c => c && c.open);
+          if (!available.length) {
+            throw new Error('No WebRTC streams became ready');
+          }
+          senderStarted = true;
+          peerConnections = available;
+          conn = available[0];
+          transferActive = true;
+          transferFinished = false;
+          updateModeBadge('sendModeBadge');
+          setStatus(`transferring over Internet P2P (${available.length} parallel stream${available.length > 1 ? 's' : ''})…`, 'ok');
+          setRadar('connected');
+          $('sendProgressWrap').classList.remove('hidden');
+          log(`⚡ ${available.length} Internet stream${available.length > 1 ? 's' : ''} active ✓`, 'done');
+          sendFileHighSpeed(available);
+        };
+
+        peer.on('connection', incomingConn => {
+          const streamIndex = Number(incomingConn.metadata?.streamIndex ?? 0);
+          senderStreams.set(streamIndex, incomingConn);
+          bindConnectionEvents(incomingConn);
+
+          incomingConn.on('open', () => {
+            log(`stream ${streamIndex + 1}/${STREAM_COUNT} connected ✓`);
+            const dc = incomingConn._dc || incomingConn.dataChannel;
+            if (streamIndex === 0 && dc) {
+              dc.binaryType = 'arraybuffer';
+              const onReady = async event => {
+                if (typeof event.data !== 'string') return;
+                try {
+                  const msg = JSON.parse(event.data);
+                  if (msg.type === 'ready' && Array.isArray(msg.streamIndices)) {
+                    dc.removeEventListener('message', onReady);
+                    try {
+                      await maybeStartSender(msg.streamIndices);
+                    } catch (error) {
+                      log('sender stream setup failed: ' + error.message, 'err');
+                      transferActive = false;
+                      setStatus('could not establish all requested streams', 'err');
+                      setRadar('error');
+                      showAlert('⚠️ WebRTC stream setup failed', 'error', '🔄 Try Again');
+                    }
+                  }
+                } catch (error) {
+                  log('stream handshake error: ' + error.message, 'err');
+                }
+              };
+              dc.addEventListener('message', onReady);
+            }
+          });
+        });
+
+      } catch (err) {
+        log('setup error: ' + err.message, 'err');
+        setStatus('setup failed — check connection', 'err');
+        setRadar('error');
+        $('startSendBtn').disabled = false;
+        $('startSendBtn').textContent = 'Generate code & QR';
+      }
+    };
+
+    function bindConnectionEvents(connection) {
+      connection.on('close', () => {
+        log('connection closed');
+        if (transferActive && !transferFinished) {
+          transferActive = false;
+          log('⚠️ Connection lost in the middle of transfer!', 'err');
+          setStatus('connection lost mid-transfer', 'err');
+          setRadar('error');
+          showAlert('⚠️ Connection Lost Mid-Transfer — The receiver disconnected.', 'error', '🔄 Reset & Try Again');
+        }
+      });
+
+      connection.on('error', err => {
+        log('connection error: ' + err.message, 'err');
+        if (transferActive && !transferFinished) {
+          transferActive = false;
+          setStatus('transfer error', 'err');
+          setRadar('error');
+          showAlert('⚠️ Connection Error Mid-Transfer', 'error', '🔄 Reset & Try Again');
+        }
+      });
+
+      if (connection.peerConnection) {
+        connection.peerConnection.oniceconnectionstatechange = () => {
+          const state = connection.peerConnection.iceConnectionState;
+          if ((state === 'disconnected' || state === 'failed') && transferActive && !transferFinished) {
+            transferActive = false;
+            log('⚠️ WebRTC connection state: ' + state, 'err');
+            setStatus('connection lost mid-transfer', 'err');
+            setRadar('error');
+            showAlert('⚠️ Connection Lost Mid-Transfer', 'error', '🔄 Reset & Try Again');
+          }
+        };
+      }
+    }
+
+    // ─── Real-Time Text Chat & Notifications Helper ────────────
+    function requestNotificationPermission() {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }
+
+    function notifyTransferComplete(filename, size, mode) {
+      saveTransferRecord({ name: filename, size: size, mode: mode, timestamp: Date.now(), status: 'completed' });
+      renderHistoryUI();
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification('🎉 FluxTransfer Complete', {
+            body: `${mode === 'send' ? 'Sent' : 'Received'} "${filename}" (${fmtBytes(size)}) successfully!`,
+            icon: '/icon.svg'
+          });
+        } catch (e) { }
+      }
+    }
+
+    function getTransferHistory() {
+      try {
+        return JSON.parse(localStorage.getItem('ft_history') || '[]');
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveTransferRecord(record) {
+      try {
+        const history = getTransferHistory();
+        history.unshift(record);
+        if (history.length > 20) history.pop();
+        localStorage.setItem('ft_history', JSON.stringify(history));
+      } catch (e) { }
+    }
+
+    function clearTransferHistory() {
+      try {
+        localStorage.removeItem('ft_history');
+      } catch (e) { }
+    }
+
+    function escapeHTML(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function renderHistoryUI() {
+      const history = getTransferHistory();
+      const container = $('historyList');
+      if (!container) return;
+      if (!history || history.length === 0) {
+        $('historySection').classList.add('hidden');
+        return;
+      }
+      $('historySection').classList.remove('hidden');
+      container.innerHTML = history.map(item => `
+    <div class="history-item">
+      <div class="history-info">
+        <span class="history-name">${escapeHTML(item.name)}</span>
+        <span class="history-meta">${fmtBytes(item.size)} · ${item.mode === 'send' ? 'Sent ⬆️' : 'Received ⬇️'} · ${new Date(item.timestamp).toLocaleTimeString()}</span>
+      </div>
+      <span class="history-badge ${item.status}">${item.status}</span>
+    </div>
+  `).join('');
+    }
+
+    $('clearHistoryBtn').onclick = () => {
+      clearTransferHistory();
+      renderHistoryUI();
+    };
+
+    // ─── Internet WebRTC File Sender ───────────────────────────
+    async function sendFileHighSpeed(connections) {
+      const file = selectedFile;
+      try {
+        updateModeBadge('sendModeBadge');
+        setStatus('encrypting & streaming over Internet P2P…');
+        const code = sessionCode || $('codeInput').value.trim();
+        await fluxEngine.sendFile(connections, file, code, progress => {
+          const remaining = progress.total - progress.loaded;
+          $('sendFill').style.width = progress.pct.toFixed(1) + '%';
+          $('sendPct').textContent = progress.pct.toFixed(0) + '%';
+          $('sendSpeed').textContent = fmtBytes(progress.speedBps) + '/s';
+          $('sendEta').textContent = fmtEta(progress.speedBps > 0 ? remaining / progress.speedBps : Infinity);
+          $('sendSent').textContent = fmtBytes(progress.loaded);
+          $('sendTotal').textContent = fmtBytes(progress.total);
+          $('sendRemaining').textContent = fmtBytes(remaining) + ' remaining';
+        }, () => transferActive && !transferFinished);
+
+        transferFinished = true;
+        transferActive = false;
+        log('transfer complete — E2EE + SHA-256 verified ✓', 'done');
+        setStatus('file sent successfully ✓', 'ok');
+        $('sendFill').style.width = '100%';
+        $('sendPct').textContent = '100%';
+        $('sendEta').textContent = 'done';
+        $('sendSent').textContent = fmtBytes(file.size);
+        $('sendTotal').textContent = fmtBytes(file.size);
+        $('sendRemaining').textContent = '✓ complete';
+        notifyTransferComplete(file.name, file.size, 'send');
+        showAlert('🎉 File Sent Successfully!', 'success', '🔄 Send Another File');
+      } catch (err) {
+        transferActive = false;
+        log('transfer error: ' + err.message, 'err');
+        setStatus('transfer interrupted', 'err');
+        setRadar('error');
+        showAlert('⚠️ Transfer Interrupted', 'error', '🔄 Reset & Try Again');
+      }
+    }
+
+    $('cancelSendBtn').onclick = () => resetAll();
+
+    // ─── RECEIVE FLOW ─────────────────────────────────────────
+    $('codeInput').addEventListener('input', e => {
+      e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+    });
+
+    (function autoFillFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      if (code) {
+        switchMode('receive');
+        const cleanCode = code.replace(/\D/g, '').slice(0, 4);
+        $('codeInput').value = cleanCode;
+        log('auto-filled numeric session code: ' + cleanCode);
+
+        const autoConnect = () => {
+          if ($('connectBtn') && !$('connectBtn').disabled) $('connectBtn').click();
+        };
+        if (document.readyState === 'complete') setTimeout(autoConnect, 300);
+        else window.addEventListener('load', () => setTimeout(autoConnect, 300));
+      }
+    })();
+
+    function waitForOpen(connection, timeoutMs = STREAM_READY_TIMEOUT_MS) {
+      return new Promise(resolve => {
+        connection.lastIceState = 'new';
+        connection.on('iceStateChanged', state => {
+          connection.lastIceState = state;
+          log(`ICE state (stream ${connection.metadata?.streamIndex ?? '?'}) → ${state}`);
+        });
+
+        // Surface low-level ICE candidate errors (STUN/TURN unreachable, etc.)
+        // as soon as the underlying RTCPeerConnection exists.
+        const attachCandidateErrorLogger = () => {
+          const pc = connection.peerConnection;
+          if (pc && !pc.__fluxCandidateErrorLogged) {
+            pc.__fluxCandidateErrorLogged = true;
+            pc.addEventListener('icecandidateerror', e => {
+              log(`ICE candidate error (stream ${connection.metadata?.streamIndex ?? '?'}): ${e.errorCode} ${e.errorText || ''} (${e.url || 'no url'})`, 'err');
+            });
+          }
+        };
+        attachCandidateErrorLogger();
+        const pcWatcher = setInterval(() => {
+          attachCandidateErrorLogger();
+          if (connection.peerConnection) clearInterval(pcWatcher);
+        }, 200);
+
+        if (connection.open) { clearInterval(pcWatcher); return resolve(connection); }
+        let settled = false;
+        const done = value => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          clearInterval(pcWatcher);
+          resolve(value);
+        };
+        const timer = setTimeout(() => done(null), timeoutMs);
+        connection.once('open', () => done(connection));
+        connection.once('error', () => done(null));
+        connection.once('close', () => done(null));
+      });
+    }
+
+    $('connectBtn').onclick = async () => {
+      if (!window.isSecureContext || !window.crypto?.subtle) {
+        setStatus('insecure context detected', 'err');
+        showAlert('⚠️ FluxTransfer requires HTTPS or localhost for secure WebRTC and encryption.', 'error', '🔄 Try Again');
+        return;
+      }
+
+      const code = $('codeInput').value.trim();
+      if (!/^\d{4}$/.test(code)) {
+        setStatus('enter the 4-digit transfer code', 'err');
+        return;
+      }
+
+      $('connectBtn').disabled = true;
+      $('connectBtn').textContent = 'Connecting…';
+      setStatus('connecting to sender over Internet P2P…');
+      setRadar('active');
+      log('connecting to sender ' + code);
+      hideAlert();
+      destroyPeer();
+
+      try {
+        if (typeof Peer === 'undefined') throw new Error('PeerJS not available');
+        peer = new Peer(undefined, PEER_CONFIG);
+
+        peer.on('error', err => {
+          log(`peer error: ${err.message} (type: ${err.type || 'unknown'})`, 'err');
+          // A single parallel stream can fail while the remaining streams are
+          // still negotiating. Do not reset the whole receiver for that case.
+          if (err.type === 'peer-unavailable' || err.type === 'server-error' || err.type === 'network') {
+            setStatus('connection failed: ' + err.type, 'err');
+            setRadar('error');
+            showAlert('⚠️ Connection Failed — Check the 4-digit code', 'error', '🔄 Try Again');
+            $('connectBtn').disabled = false;
+            $('connectBtn').textContent = 'Connect';
+          }
+        });
+
+        peer.on('open', async () => {
+          let primaryCandidate = null;
+          try {
+            primaryCandidate = peer.connect('fluxtransfer_v3_' + code, {
+              reliable: true,
+              serialization: 'raw',
+              metadata: { streamIndex: 0 }
+            });
+
+            const primaryOpened = await waitForOpen(primaryCandidate);
+            if (!primaryOpened) {
+              throw new Error('Primary WebRTC stream did not open');
+            }
+
+            const otherCandidates = [];
+            for (let i = 1; i < STREAM_COUNT; i++) {
+              const candidate = peer.connect('fluxtransfer_v3_' + code, {
+                reliable: true,
+                serialization: 'raw',
+                metadata: { streamIndex: i }
+              });
+              otherCandidates.push(candidate);
+            }
+
+            const othersOpened = (await Promise.all(otherCandidates.map(c => waitForOpen(c)))).filter(Boolean);
+            const opened = [primaryOpened, ...othersOpened];
+
+            // Make sure we keep the same logical stream ordering on both sides.
+            opened.sort((a, b) => Number(a.metadata?.streamIndex ?? 0) - Number(b.metadata?.streamIndex ?? 0));
+            peerConnections = opened;
+            conn = opened[0];
+            const indices = opened.map(c => Number(c.metadata?.streamIndex ?? 0));
+            log(`⚡ ${opened.length}/${STREAM_COUNT} Internet streams connected ✓`, 'done');
+
+            const primaryDC = conn._dc || conn.dataChannel;
+            if (!primaryDC) throw new Error('Primary WebRTC data channel unavailable');
+            primaryDC.binaryType = 'arraybuffer';
+            primaryDC.send(JSON.stringify({ type: 'ready', streamIndices: indices }));
+
+            transferActive = true;
+            transferFinished = false;
+            updateModeBadge('recvModeBadge');
+            setStatus(`receiving over Internet P2P (${opened.length} parallel streams)…`, 'ok');
+            setRadar('connected');
+            $('connectBtn').classList.add('hidden');
+            $('cancelReceiveBtn').classList.remove('hidden');
+            setupReceiver(opened);
+          } catch (error) {
+            const iceState = primaryCandidate?.lastIceState || primaryCandidate?.peerConnection?.iceConnectionState || 'unknown';
+            log(`connection setup error: ${error.message} (ICE state: ${iceState})`, 'err');
+            setStatus('could not establish WebRTC streams', 'err');
+            setRadar('error');
+            showAlert('⚠️ Could not connect — check the code and try again', 'error', '🔄 Try Again');
+            $('connectBtn').disabled = false;
+            $('connectBtn').textContent = 'Connect';
+          }
+        });
+      } catch (err) {
+        log('setup error: ' + err.message, 'err');
+        setStatus('setup failed — check connection', 'err');
+        setRadar('error');
+        $('connectBtn').disabled = false;
+        $('connectBtn').textContent = 'Connect';
+      }
+    };
+
+    // ─── Receiver ─────────────────────────────────────────────
+    async function setupReceiver(connections) {
+      $('recvProgressWrap').classList.remove('hidden');
+      const code = $('codeInput').value.trim();
+
+      if (fluxEngine.lastOpfsWorker) {
+        try {
+          fluxEngine.lastOpfsWorker.postMessage({ type: 'delete' });
+          try { fluxEngine.lastOpfsWorker.terminate(); } catch (_) { }
+        } catch (_) { }
+        fluxEngine.lastOpfsWorker = null;
+      }
+
+      try {
+        let currentMeta = null;
+        const result = await fluxEngine.receiveFile(connections, code, {
+          onMeta: (meta) => {
+            currentMeta = meta;
+            $('recvFileName').textContent = meta.name;
+            log(`incoming: ${meta.name} (${fmtBytes(meta.size)}) over ${connections.length} parallel streams`);
+          },
+          onProgress: (progress) => {
+            if (!currentMeta) return;
+            const remaining = progress.total - progress.loaded;
+            $('recvFill').style.width = progress.pct.toFixed(1) + '%';
+            $('recvPct').textContent = progress.pct.toFixed(0) + '%';
+            $('recvSpeed').textContent = fmtBytes(progress.speedBps) + '/s';
+            $('recvEta').textContent = fmtEta(progress.speedBps > 0 ? remaining / progress.speedBps : Infinity);
+            $('recvReceived').textContent = fmtBytes(progress.loaded);
+            $('recvTotal').textContent = fmtBytes(progress.total);
+            $('recvRemaining').textContent = fmtBytes(remaining) + ' remaining';
+          }
+        });
+
+        transferFinished = true;
+        transferActive = false;
+        log('transfer complete — E2EE + SHA-256 verified ✓', 'done');
+        setStatus('file received successfully ✓', 'ok');
+        $('recvFill').style.width = '100%';
+        $('recvPct').textContent = '100%';
+        $('recvEta').textContent = 'done';
+
+        $('recvReceived').textContent = fmtBytes(result.meta.size);
+        $('recvTotal').textContent = fmtBytes(result.meta.size);
+        $('recvRemaining').textContent = '✓ complete';
+
+        if (activeDownloadUrl) {
+          try { URL.revokeObjectURL(activeDownloadUrl); } catch (_) { }
+        }
+        const url = URL.createObjectURL(result.blob);
+        activeDownloadUrl = url;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = result.meta.name || 'file.bin';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        notifyTransferComplete(result.meta.name, result.meta.size, 'receive');
+        showAlert('🎉 File Received Successfully!', 'success', '🔄 Receive Another File');
+      } catch (err) {
+        transferActive = false;
+        log('receive error: ' + err.message, 'err');
+        setStatus('receive interrupted', 'err');
+        setRadar('error');
+        showAlert('⚠️ Receive Interrupted', 'error', '🔄 Reset & Try Again');
+      }
+    }
+
+    $('cancelReceiveBtn').onclick = () => resetAll();
+
+    // ─── Reset ────────────────────────────────────────────────
+    function destroyPeer() {
+      peerConnections.forEach(c => { try { c.close(); } catch (_) { } });
+      peerConnections = [];
+      if (conn) { try { conn.close(); } catch (_) { } conn = null; }
+      if (peer) { try { peer.destroy(); } catch (_) { } peer = null; }
+    }
+
+    function resetAll() {
+      if (activeDownloadUrl) {
+        try { URL.revokeObjectURL(activeDownloadUrl); } catch (_) { }
+        activeDownloadUrl = null;
+      }
+      if (fluxEngine.lastOpfsWorker) {
+        try {
+          fluxEngine.lastOpfsWorker.postMessage({ type: 'delete' });
+          const workerToTerminate = fluxEngine.lastOpfsWorker;
+          setTimeout(() => {
+            try { workerToTerminate.terminate(); } catch (_) { }
+          }, 5000);
+        } catch (_) { }
+        fluxEngine.lastOpfsWorker = null;
+      }
+      destroyPeer();
+      stopScanner();
+      hideAlert();
+
+      transferActive = false;
+      transferFinished = false;
+      selectedFile = null;
+
+      $('fileChip').classList.add('hidden');
+      $('sendCodeBox').classList.add('hidden');
+      $('startSendBtn').classList.remove('hidden');
+      $('startSendBtn').disabled = true;
+      $('startSendBtn').textContent = 'Generate code & QR';
+      $('cancelSendBtn').classList.add('hidden');
+      $('sendProgressWrap').classList.add('hidden');
+      $('sendFill').style.width = '0%';
+      $('sendPct').textContent = '0%';
+      $('sendSent').textContent = '0 B';
+      $('sendTotal').textContent = '--';
+      $('sendRemaining').textContent = '-- remaining';
+      $('sendModeBadge').classList.add('hidden');
+
+      $('codeInput').value = '';
+      $('connectBtn').classList.remove('hidden');
+      $('connectBtn').disabled = false;
+      $('connectBtn').textContent = 'Connect';
+      $('cancelReceiveBtn').classList.add('hidden');
+      $('recvProgressWrap').classList.add('hidden');
+      $('recvFill').style.width = '0%';
+      $('recvPct').textContent = '0%';
+      $('recvReceived').textContent = '0 B';
+      $('recvTotal').textContent = '--';
+      $('recvRemaining').textContent = '-- remaining';
+      $('recvModeBadge').classList.add('hidden');
+
+      setStatus('idle — ' + (mode === 'send' ? 'choose a file to send' : 'enter a code to receive'));
+      setRadar('idle');
+    }
+
+    // Init
+    setRadar('idle');
+    renderHistoryUI();
+  </script>
+</body>
+
+</html>

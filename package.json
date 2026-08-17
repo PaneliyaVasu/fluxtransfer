@@ -1,0 +1,16 @@
+{
+  "name": "fluxtransfer",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Internet-first peer-to-peer file transfer using WebRTC and PeerJS",
+  "scripts": {
+    "dev": "npx serve src/client"
+  },
+  "keywords": [
+    "webrtc",
+    "p2p",
+    "file-transfer",
+    "peerjs"
+  ],
+  "license": "MIT"
+}
