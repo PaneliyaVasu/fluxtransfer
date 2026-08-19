@@ -160,6 +160,13 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="/p2p-engine.js"></script>
 
+  <!-- Flux Zen Core Features -->
+  <link rel="stylesheet" href="/zen/zen.css">
+  <script src="/zen/facts.js"></script>
+  <script src="/zen/games.js"></script>
+  <script src="/zen/visuals.js"></script>
+  <script src="/zen/zen.js"></script>
+
   <style>
     :root {
       --bg: #0D1512;
@@ -191,27 +198,27 @@
       color: var(--text);
       font-family: var(--font-body);
       min-height: 100vh;
-      padding: 32px 20px 60px;
+      padding: 16px 20px 24px;
       background-image:
         radial-gradient(circle at 15% 10%, rgba(232, 163, 61, 0.06), transparent 40%),
         radial-gradient(circle at 85% 90%, rgba(111, 168, 160, 0.07), transparent 40%);
     }
 
     .wrap {
-      max-width: 680px;
+      max-width: 1340px;
       margin: 0 auto;
     }
 
     /* ─── Header ─── */
     header {
       text-align: center;
-      margin-bottom: 28px;
+      margin-bottom: 14px;
     }
 
     h1.wordmark {
       font-family: var(--font-display);
       font-weight: 700;
-      font-size: 28px;
+      font-size: 24px;
       letter-spacing: -0.02em;
       display: inline-flex;
       align-items: center;
@@ -284,9 +291,9 @@
 
     /* ─── Radar ─── */
     .radar {
-      width: 150px;
-      height: 150px;
-      margin: 0 auto 24px;
+      width: 90px;
+      height: 90px;
+      margin: 0 auto 12px;
       position: relative;
       display: flex;
       align-items: center;
@@ -388,7 +395,7 @@
       font-size: 12px;
       color: var(--text-muted);
       min-height: 18px;
-      margin-bottom: 24px;
+      margin-bottom: 12px;
       letter-spacing: 0.02em;
     }
 
@@ -451,7 +458,7 @@
       border: 1px solid var(--line);
       border-radius: 10px;
       padding: 4px;
-      margin-bottom: 20px;
+      margin-bottom: 14px;
     }
 
     .tab {
@@ -543,7 +550,7 @@
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 14px;
-      padding: 28px;
+      padding: 20px;
     }
 
     .hidden {
@@ -554,7 +561,7 @@
     .drop {
       border: 1.5px dashed var(--line);
       border-radius: 10px;
-      padding: 32px 20px;
+      padding: 20px 16px;
       text-align: center;
       cursor: pointer;
       transition: border-color 0.2s, background 0.2s;
@@ -1034,119 +1041,6 @@
       opacity: 0.6;
     }
 
-    /* ─── Premium Monetization Side Banner Ad Slots ─── */
-    .ad-slot-side {
-      position: fixed;
-      top: 80px;
-      width: 200px;
-      height: 600px;
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px 10px;
-      text-align: center;
-      box-sizing: border-box;
-      z-index: 90;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      transition: border-color 0.25s ease, background 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-      cursor: pointer;
-      text-decoration: none;
-      color: inherit;
-    }
-
-    .ad-slot-side.left {
-      left: 20px;
-    }
-
-    .ad-slot-side.right {
-      right: 20px;
-    }
-
-    .ad-slot-side:hover {
-      border-color: var(--amber-dim);
-      background: var(--panel-raised);
-      box-shadow: 0 0 20px rgba(232, 163, 61, 0.12);
-      transform: translateY(-3px);
-    }
-
-    .ad-label {
-      font-family: var(--font-mono);
-      font-size: 9px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      display: block;
-    }
-
-    .ad-banner-img {
-      width: 100%;
-      height: 380px;
-      object-fit: cover;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    }
-
-    .ad-placeholder-side {
-      flex: 1;
-      width: 100%;
-      margin: 10px 0;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      color: var(--sage);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      border: 1px dashed var(--line);
-      border-radius: 8px;
-      padding: 10px 6px;
-      background: rgba(111, 168, 160, 0.03);
-    }
-
-    .ad-placeholder-side .ad-icon {
-      font-size: 32px;
-    }
-
-    .ad-placeholder-side .ad-title {
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 13px;
-      color: var(--amber);
-      margin-bottom: 2px;
-    }
-
-    .ad-placeholder-side .ad-text {
-      font-size: 10px;
-      color: var(--text-muted);
-      line-height: 1.4;
-    }
-
-    .ad-cta-btn {
-      width: 100%;
-      background: var(--amber);
-      color: #1a1206;
-      border: none;
-      border-radius: 6px;
-      padding: 8px 4px;
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 11px;
-      cursor: pointer;
-      transition: filter 0.2s;
-      pointer-events: none;
-      /* Container itself handles click */
-    }
-
-    @media (max-width: 1100px) {
-      .ad-slot-side {
-        display: none;
-      }
-    }
   </style>
 </head>
 
@@ -1159,29 +1053,9 @@
       <div class="ip-badge hidden" id="ipBadge">📡 Internet P2P Active: <span id="myIp">--</span></div>
     </header>
 
-    <!-- ═══ LEFT & RIGHT MONETIZATION AD BANNERS (Skyscraper format) ═══ -->
-    <a class="ad-slot-side left" id="adSlotLeft" href="https://fluxtransfer.netlify.app" target="_blank" rel="noopener">
-      <span class="ad-label">Sponsored</span>
-      <div class="ad-placeholder-side">
-        <img src="/ad-left.png" alt="Ultra Fast P2P Ad" class="ad-banner-img">
-        <span class="ad-title">Ultra Fast P2P</span>
-        <span class="ad-text">Transfer files at full Wi-Fi speeds without cloud limits.</span>
-      </div>
-      <button class="ad-cta-btn">Learn More</button>
-    </a>
-
-    <a class="ad-slot-side right" id="adSlotRight" href="https://fluxtransfer.netlify.app" target="_blank"
-      rel="noopener">
-      <span class="ad-label">Advertisement</span>
-      <div class="ad-placeholder-side">
-        <img src="/ad-right.png" alt="AES-256 E2EE Ad" class="ad-banner-img">
-        <span class="ad-title">AES-256 E2EE</span>
-        <span class="ad-text">Your files are not stored by FluxTransfer. Transfer payloads use encrypted WebRTC.</span>
-      </div>
-      <button class="ad-cta-btn">Try Premium</button>
-    </a>
-
-    <main>
+    <!-- ═══ CONTENT AREA FOR SPLIT LAYOUT ═══ -->
+    <div class="content-area">
+      <main>
       <div class="radar" id="radarEl">
         <div class="radar-ring r1"></div>
         <div class="radar-ring r2"></div>
@@ -1197,7 +1071,10 @@
       <!-- Success / Disconnect Alert Banner -->
       <div class="alert-box hidden" id="alertBanner">
         <span id="alertMsg"></span>
-        <button id="alertResetBtn">🔄 Send Another File</button>
+        <div class="alert-buttons" style="display: flex; gap: 10px; width: 100%; justify-content: center; margin-top: 6px;">
+          <button id="saveFileBtn" class="hidden" style="background: var(--sage) !important; color: #0d1512 !important; font-weight: bold;">💾 Save File</button>
+          <button id="alertResetBtn" style="margin: 0;">🔄 Send Another File</button>
+        </div>
       </div>
 
       <!-- Discovered Wi-Fi Peer Radar -->
@@ -1330,9 +1207,10 @@
         </div>
       </article>
     </main>
+    </div> <!-- /.content-area -->
 
     <footer>Internet P2P WebRTC · zero cloud file storage · E2E encrypted</footer>
-  </div>
+  </div> <!-- /.wrap -->
 
   <!-- Camera Scanner Modal -->
   <div class="scanner-modal hidden" id="scannerModal">
@@ -1367,9 +1245,11 @@
 
     // ─── State ────────────────────────────────────────────────
     let mode = 'send';
+    window.fluxMode = 'send';
     let peer = null;
     let conn = null;
     let peerConnections = [];
+    window.peerConnections = [];
     const STREAM_COUNT = 6;
     const STREAM_READY_TIMEOUT_MS = 20000;
     let selectedFile = null;
@@ -1410,7 +1290,7 @@
     // ─── UI Alert / Banner Controller ─────────────────────────
     let autoResetTimer = null;
 
-    function showAlert(message, type = 'success', buttonLabel = '🔄 Send Another File') {
+    function showAlert(message, type = 'success', buttonLabel = '🔄 Send Another File', autoReset = true) {
       const banner = $('alertBanner');
       const msgEl = $('alertMsg');
       const btnEl = $('alertResetBtn');
@@ -1425,7 +1305,7 @@
       btnEl.textContent = buttonLabel;
       banner.classList.remove('hidden');
 
-      if (type === 'success') {
+      if (type === 'success' && autoReset) {
         let countdown = 5;
         btnEl.textContent = `${buttonLabel} (${countdown}s auto-reset)`;
         autoResetTimer = setInterval(() => {
@@ -1601,6 +1481,7 @@
 
     function switchMode(m) {
       mode = m;
+      window.fluxMode = m;
       $('tabSend').classList.toggle('active', m === 'send');
       $('tabReceive').classList.toggle('active', m === 'receive');
       $('sendPanel').classList.toggle('hidden', m !== 'send');
@@ -1771,6 +1652,7 @@
             if (available.length === indices.length) {
               senderStarted = true;
               peerConnections = available;
+              window.peerConnections = available;
               conn = available[0];
               transferActive = true;
               transferFinished = false;
@@ -1798,6 +1680,7 @@
           }
           senderStarted = true;
           peerConnections = available;
+          window.peerConnections = available;
           conn = available[0];
           transferActive = true;
           transferFinished = false;
@@ -1973,14 +1856,18 @@
           $('sendFill').style.width = progress.pct.toFixed(1) + '%';
           $('sendPct').textContent = progress.pct.toFixed(0) + '%';
           $('sendSpeed').textContent = fmtBytes(progress.speedBps) + '/s';
-          $('sendEta').textContent = fmtEta(progress.speedBps > 0 ? remaining / progress.speedBps : Infinity);
+          const etaSeconds = progress.speedBps > 0 ? remaining / progress.speedBps : Infinity;
+          $('sendEta').textContent = fmtEta(etaSeconds);
           $('sendSent').textContent = fmtBytes(progress.loaded);
           $('sendTotal').textContent = fmtBytes(progress.total);
           $('sendRemaining').textContent = fmtBytes(remaining) + ' remaining';
+
+          if (window.FluxZen) window.FluxZen.updateProgress(etaSeconds, progress);
         }, () => transferActive && !transferFinished);
 
         transferFinished = true;
         transferActive = false;
+        if (window.FluxZen) window.FluxZen.onTransferComplete();
         log('transfer complete — E2EE + SHA-256 verified ✓', 'done');
         setStatus('file sent successfully ✓', 'ok');
         $('sendFill').style.width = '100%';
@@ -1993,6 +1880,7 @@
         showAlert('🎉 File Sent Successfully!', 'success', '🔄 Send Another File');
       } catch (err) {
         transferActive = false;
+        if (window.FluxZen) window.FluxZen.reset();
         log('transfer error: ' + err.message, 'err');
         setStatus('transfer interrupted', 'err');
         setRadar('error');
@@ -2005,6 +1893,15 @@
     // ─── RECEIVE FLOW ─────────────────────────────────────────
     $('codeInput').addEventListener('input', e => {
       e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4);
+    });
+
+    $('codeInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (!$('connectBtn').disabled) {
+          $('connectBtn').click();
+        }
+      }
     });
 
     (function autoFillFromURL() {
@@ -2133,6 +2030,7 @@
             // Make sure we keep the same logical stream ordering on both sides.
             opened.sort((a, b) => Number(a.metadata?.streamIndex ?? 0) - Number(b.metadata?.streamIndex ?? 0));
             peerConnections = opened;
+            window.peerConnections = opened;
             conn = opened[0];
             const indices = opened.map(c => Number(c.metadata?.streamIndex ?? 0));
             log(`⚡ ${opened.length}/${STREAM_COUNT} Internet streams connected ✓`, 'done');
@@ -2196,15 +2094,19 @@
             $('recvFill').style.width = progress.pct.toFixed(1) + '%';
             $('recvPct').textContent = progress.pct.toFixed(0) + '%';
             $('recvSpeed').textContent = fmtBytes(progress.speedBps) + '/s';
-            $('recvEta').textContent = fmtEta(progress.speedBps > 0 ? remaining / progress.speedBps : Infinity);
+            const etaSeconds = progress.speedBps > 0 ? remaining / progress.speedBps : Infinity;
+            $('recvEta').textContent = fmtEta(etaSeconds);
             $('recvReceived').textContent = fmtBytes(progress.loaded);
             $('recvTotal').textContent = fmtBytes(progress.total);
             $('recvRemaining').textContent = fmtBytes(remaining) + ' remaining';
+
+            if (window.FluxZen) window.FluxZen.updateProgress(etaSeconds, progress);
           }
         });
 
         transferFinished = true;
         transferActive = false;
+        if (window.FluxZen) window.FluxZen.onTransferComplete();
         log('transfer complete — E2EE + SHA-256 verified ✓', 'done');
         setStatus('file received successfully ✓', 'ok');
         $('recvFill').style.width = '100%';
@@ -2215,22 +2117,33 @@
         $('recvTotal').textContent = fmtBytes(result.meta.size);
         $('recvRemaining').textContent = '✓ complete';
 
-        if (activeDownloadUrl) {
-          try { URL.revokeObjectURL(activeDownloadUrl); } catch (_) { }
+        window.receivedFile = result.blob;
+        window.receivedFileName = result.meta.name || 'file.bin';
+        $('saveFileBtn').classList.remove('hidden');
+
+        // Only auto-trigger download for files under 100MB
+        if (result.meta.size < 100 * 1024 * 1024) {
+          log('auto-triggering download for small file...');
+          if (activeDownloadUrl) {
+            try { URL.revokeObjectURL(activeDownloadUrl); } catch (_) { }
+          }
+          const url = URL.createObjectURL(result.blob);
+          activeDownloadUrl = url;
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = result.meta.name || 'file.bin';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } else {
+          log('large file received. click "Save File" to write directly to disk (bypasses browser blob size limits).');
         }
-        const url = URL.createObjectURL(result.blob);
-        activeDownloadUrl = url;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = result.meta.name || 'file.bin';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
 
         notifyTransferComplete(result.meta.name, result.meta.size, 'receive');
-        showAlert('🎉 File Received Successfully!', 'success', '🔄 Receive Another File');
+        showAlert('🎉 File Received Successfully!', 'success', '🔄 Receive Another File', false);
       } catch (err) {
         transferActive = false;
+        if (window.FluxZen) window.FluxZen.reset();
         log('receive error: ' + err.message, 'err');
         setStatus('receive interrupted', 'err');
         setRadar('error');
@@ -2240,10 +2153,71 @@
 
     $('cancelReceiveBtn').onclick = () => resetAll();
 
+    $('saveFileBtn').onclick = async () => {
+      if (!window.receivedFile) return;
+
+      const file = window.receivedFile;
+      const fileName = window.receivedFileName || 'file.bin';
+
+      // Check if showSaveFilePicker is supported (desktop Chrome/Edge/etc.)
+      if (window.showSaveFilePicker) {
+        try {
+          setStatus('saving file…');
+          const handle = await window.showSaveFilePicker({
+            suggestedName: fileName
+          });
+          const writable = await handle.createWritable();
+          
+          const size = file.size;
+          const chunkSize = 16 * 1024 * 1024; // 16MB chunk size for smooth writing
+          let offset = 0;
+          
+          while (offset < size) {
+            const slice = file.slice(offset, offset + chunkSize);
+            const buffer = await slice.arrayBuffer();
+            await writable.write(buffer);
+            offset += chunkSize;
+            
+            const pct = Math.round((offset / size) * 100);
+            setStatus(`saving to disk: ${pct > 100 ? 100 : pct}%`);
+          }
+          await writable.close();
+          setStatus('file saved successfully ✓', 'ok');
+          log('file saved successfully via showSaveFilePicker');
+          showAlert('🎉 File Saved Successfully!', 'success', '🔄 Receive Another File', false);
+          return;
+        } catch (err) {
+          if (err.name === 'AbortError') {
+            log('save picker cancelled by user');
+            setStatus('save cancelled');
+            return;
+          }
+          console.error('Save picker failed, falling back to Blob URL download:', err);
+        }
+      }
+
+      // Fallback: regular object URL download
+      try {
+        log('using fallback download method…');
+        const url = URL.createObjectURL(file);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        log('file download triggered via fallback Object URL');
+      } catch (err) {
+        log('failed to download file: ' + err.message, 'err');
+      }
+    };
+
     // ─── Reset ────────────────────────────────────────────────
     function destroyPeer() {
       peerConnections.forEach(c => { try { c.close(); } catch (_) { } });
       peerConnections = [];
+      window.peerConnections = [];
       if (conn) { try { conn.close(); } catch (_) { } conn = null; }
       if (peer) { try { peer.destroy(); } catch (_) { } peer = null; }
     }
@@ -2270,6 +2244,9 @@
       transferActive = false;
       transferFinished = false;
       selectedFile = null;
+      window.receivedFile = null;
+      window.receivedFileName = null;
+      $('saveFileBtn').classList.add('hidden');
 
       $('fileChip').classList.add('hidden');
       $('sendCodeBox').classList.add('hidden');
@@ -2300,11 +2277,16 @@
 
       setStatus('idle — ' + (mode === 'send' ? 'choose a file to send' : 'enter a code to receive'));
       setRadar('idle');
+      if (window.FluxZen) window.FluxZen.reset();
     }
 
     // Init
     setRadar('idle');
     renderHistoryUI();
+    if (window.FluxZen) {
+      window.FluxZen.initDOM();
+      window.FluxZen.render();
+    }
   </script>
 </body>
 
