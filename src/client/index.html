@@ -68,7 +68,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="/p2p-engine.js"></script>
   <script src="/webrtc-engine.js"></script>
 
   <!-- Flux Zen Core Features -->
@@ -385,8 +384,9 @@
             </div>
           </div>
 
-          <button onclick="resetAll()" class="px-5 py-2 rounded-lg border border-glass-border text-xs text-on-surface-variant hover:text-red-400 hover:border-red-400/40 transition-colors touch-target">
-            Abort Transfer
+          <button onclick="resetAll()" class="w-full pt-4 pb-4 mt-4 py-3.5 px-4 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 font-bold hover:bg-emerald-500/30 hover:border-emerald-500/60 transition-all text-sm touch-target flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/10">
+            <span class="material-symbols-outlined text-lg">cancel</span>
+            <span>Abort Transfer</span>
           </button>
         </div>
 
@@ -540,7 +540,6 @@
     let sessionCode = null;
     let transferActive = false;
     let transferFinished = false;
-    let fluxEngine = new FluxEngine();
     let webrtcEngine = null;
 
     const $ = id => document.getElementById(id);
@@ -701,9 +700,17 @@
           else if (type === 'error') setRadar('error');
         },
         onPeerJoined: () => {
+          // Peer entered the room — P2P negotiation starting, DataChannel not open yet.
+          // Just show the progress panel; actual send happens in onDataChannelOpen.
           if (mode === 'send' && selectedFile) {
             $('sendCodeBox').classList.add('hidden');
             $('sendProgressWrap').classList.remove('hidden');
+            setStatus('Peer connected! Establishing encrypted P2P channel…');
+          }
+        },
+        onDataChannelOpen: () => {
+          // DataChannel is NOW truly open — safe to start the file transfer.
+          if (mode === 'send' && selectedFile && !webrtcEngine.isTransferring) {
             webrtcEngine.sendFile(selectedFile);
           }
         },
@@ -714,23 +721,74 @@
           $('progressBar').style.width = `${data.percent}%`;
           $('transferSize').textContent = `${formatBytes(data.transferredBytes)} / ${formatBytes(data.totalBytes)}`;
           $('transferSpeed').textContent = `${formatBytes(data.speedBps)}/s`;
+
+          // Calculate dynamic ETA
+          const remainingBytes = data.totalBytes - data.transferredBytes;
+          if (data.speedBps > 0 && remainingBytes > 0) {
+            const remainingSec = Math.ceil(remainingBytes / data.speedBps);
+            const mins = Math.floor(remainingSec / 60);
+            const secs = Math.floor(remainingSec % 60);
+            $('transferETA').textContent = `ETA ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          } else {
+            $('transferETA').textContent = `ETA 00:00`;
+          }
         },
         onFileComplete: (blob, meta) => {
+          // Hide all active upload / receive / progress elements & cancel session UI
           $('sendProgressWrap').classList.add('hidden');
+          $('sendPanel').classList.add('hidden');
+          $('sendPanel').classList.remove('flex');
+          $('receivePanel').classList.add('hidden');
+          $('receivePanel').classList.remove('flex');
+          $('sendCodeBox').classList.add('hidden');
+          $('cancelSendBtn').classList.add('hidden');
+
+          // Show completion card
           $('completedBox').classList.remove('hidden');
           $('completedBox').classList.add('flex');
-          $('completedFileText').textContent = `Received "${meta.name}" (${formatBytes(meta.size)}) successfully!`;
-          
-          const url = URL.createObjectURL(blob);
-          const dlBtn = $('downloadFileBtn');
-          dlBtn.href = url;
-          dlBtn.download = meta.name;
 
-          saveTransferRecord({ name: meta.name, size: meta.size, direction: 'Received', time: new Date().toLocaleTimeString() });
+          const dlBtn = $('downloadFileBtn');
+
+          if (blob) {
+            // Receiver Side
+            $('completedFileText').textContent = `Received "${meta.name}" (${formatBytes(meta.size)}) successfully!`;
+            const url = URL.createObjectURL(blob);
+            dlBtn.href = url;
+            dlBtn.download = meta.name;
+            dlBtn.classList.remove('hidden');
+
+            // Automatically trigger browser file download for receiver
+            try {
+              const autoAnchor = document.createElement('a');
+              autoAnchor.href = url;
+              autoAnchor.download = meta.name;
+              document.body.appendChild(autoAnchor);
+              autoAnchor.click();
+              document.body.removeChild(autoAnchor);
+            } catch (e) {
+              console.warn('[FluxTransfer] Auto-download error:', e);
+            }
+
+            saveTransferRecord({ name: meta.name, size: meta.size, direction: 'Received', time: new Date().toLocaleTimeString() });
+          } else {
+            // Sender Side
+            $('completedFileText').textContent = `Sent "${meta.name}" (${formatBytes(meta.size)}) successfully!`;
+            dlBtn.classList.add('hidden');
+
+            saveTransferRecord({ name: meta.name, size: meta.size, direction: 'Sent', time: new Date().toLocaleTimeString() });
+          }
         },
-        onError: (errText) => {
-          showAlert(`Transfer error: ${errText}`);
+        onPeerLeft: () => {
+          showAlert('Peer disconnected or cancelled the transfer session.', 'warning');
           setRadar('error');
+          setTimeout(() => resetUIOnly(), 1000);
+        },
+        onError: (errText, errCode) => {
+          showAlert(`Transfer: ${errText}`, 'warning');
+          setRadar('error');
+          if (errCode === 'ERR_TRANSFER_CANCELLED' || errCode === 'ERR_PEER_DISCONNECTED') {
+            setTimeout(() => resetUIOnly(), 1000);
+          }
         }
       });
 
@@ -773,8 +831,27 @@
     }
 
     function resetAll() {
-      if (webrtcEngine) webrtcEngine.disconnect();
+      if (webrtcEngine) {
+        webrtcEngine.cancelTransfer();
+        webrtcEngine.disconnect();
+      }
+      resetUIOnly();
+    }
+
+    function resetUIOnly() {
       resetSelectedFile();
+      // Restore appropriate panel based on mode
+      if (mode === 'send') {
+        $('sendPanel').classList.remove('hidden');
+        $('sendPanel').classList.add('flex');
+        $('receivePanel').classList.add('hidden');
+        $('receivePanel').classList.remove('flex');
+      } else {
+        $('receivePanel').classList.remove('hidden');
+        $('receivePanel').classList.add('flex');
+        $('sendPanel').classList.add('hidden');
+        $('sendPanel').classList.remove('flex');
+      }
       $('sendCodeBox').classList.add('hidden');
       $('startSendBtn').classList.remove('hidden');
       $('cancelSendBtn').classList.add('hidden');
@@ -788,11 +865,34 @@
 
     // ─── QR Modal ─────────────────────────────────────────────────────────────
     let html5QrScanner = null;
-    function openQRModal() {
-      $('qrModal').classList.remove('hidden');
-      if (typeof Html5Qrcode !== 'undefined') {
+    let isScanning = false;
+
+    async function openQRModal() {
+      const modal = $('qrModal');
+      if (!modal) return;
+      modal.classList.remove('hidden');
+
+      // Wait for layout rendering so scanner element dimensions are calculated
+      await new Promise(r => setTimeout(r, 150));
+
+      if (typeof Html5Qrcode === 'undefined') {
+        showAlert('QR Scanner library not loaded.', 'warning');
+        return;
+      }
+
+      try {
+        if (isScanning && html5QrScanner) {
+          await closeQRModal();
+          await new Promise(r => setTimeout(r, 100));
+        }
+
+        const container = $('qrScannerContainer');
+        if (container) container.innerHTML = '';
+
         html5QrScanner = new Html5Qrcode("qrScannerContainer");
-        html5QrScanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 200 }, (qrCodeMessage) => {
+        const config = { fps: 10, qrbox: { width: 220, height: 220 } };
+
+        const onScanSuccess = (qrCodeMessage) => {
           closeQRModal();
           try {
             const url = new URL(qrCodeMessage);
@@ -802,19 +902,49 @@
               $('connectBtn').click();
             }
           } catch (e) {
-            if (/^\d{4}$/.test(qrCodeMessage)) {
-              $('codeInput').value = qrCodeMessage;
+            const trimmed = qrCodeMessage.trim();
+            if (/^\d{4}$/.test(trimmed)) {
+              $('codeInput').value = trimmed;
               $('connectBtn').click();
             }
           }
-        }).catch(err => console.log('Camera error', err));
+        };
+
+        isScanning = true;
+        html5QrScanner.start({ facingMode: "environment" }, config, onScanSuccess)
+          .catch(() => html5QrScanner.start({ facingMode: "user" }, config, onScanSuccess))
+          .catch(() => {
+            Html5Qrcode.getCameras().then(cameras => {
+              if (cameras && cameras.length > 0) {
+                html5QrScanner.start(cameras[0].id, config, onScanSuccess);
+              } else {
+                showAlert('No camera found on this device.', 'warning');
+                closeQRModal();
+              }
+            }).catch(err => {
+              console.error('Camera access error:', err);
+              showAlert('Camera access error. Note: HTTPS is required for camera on LAN.', 'warning');
+              closeQRModal();
+            });
+          });
+      } catch (err) {
+        console.error('QR Scanner error:', err);
+        isScanning = false;
       }
     }
 
-    function closeQRModal() {
-      $('qrModal').classList.add('hidden');
-      if (html5QrScanner) {
-        html5QrScanner.stop().catch(e => {}).then(() => html5QrScanner.clear());
+    async function closeQRModal() {
+      const modal = $('qrModal');
+      if (modal) modal.classList.add('hidden');
+      if (html5QrScanner && isScanning) {
+        isScanning = false;
+        try {
+          await html5QrScanner.stop();
+          html5QrScanner.clear();
+        } catch (e) {
+          console.warn('Error closing QR scanner:', e);
+        }
+        html5QrScanner = null;
       }
     }
 

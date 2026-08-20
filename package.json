@@ -4,9 +4,9 @@
   "private": true,
   "description": "Internet-first peer-to-peer file transfer using WebRTC and PeerJS",
   "scripts": {
-    "dev": "npx serve --no-request-logging src/client",
+    "dev": "node src/server/signaling-server.js",
     "start": "node src/server/signaling-server.js",
-    "dev:full": "node src/server/signaling-server.js"
+    "dev:static": "npx serve --no-request-logging src/client"
   },
   "keywords": [
     "webrtc",

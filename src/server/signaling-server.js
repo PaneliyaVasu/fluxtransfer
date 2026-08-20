@@ -72,11 +72,10 @@ function serveStatic(req, res) {
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME[ext] || 'application/octet-stream';
-    const maxAge = ext === '.html' ? 0 : 3600; // cache assets 1h, HTML no-cache
 
     res.writeHead(200, {
       'Content-Type': contentType,
-      'Cache-Control': `public, max-age=${maxAge}`,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
       'X-Content-Type-Options': 'nosniff',
     });
 
