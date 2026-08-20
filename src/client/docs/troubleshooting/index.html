@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Troubleshooting & Diagnostics — FluxTransfer Documentation</title>
+  <meta name="description" content="Diagnose NAT traversal issues, WebRTC signaling timeouts, symmetric NAT firewalls, and TURN relay setup.">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-container-lowest": "#07100D",
+            "background": "#07100D",
+            "surface": "#0C1512",
+            "surface-card": "#16211C",
+            "primary": "#4EDEA3",
+            "primary-container": "#10B981",
+            "secondary": "#97D2C9",
+            "accent-gold": "#E8A33D",
+            "on-surface": "#DAE5DF",
+            "on-surface-variant": "#9CA3AF",
+            "glass-border": "rgba(255, 255, 255, 0.08)"
+          },
+          fontFamily: {
+            "display": ["Space Grotesk", "sans-serif"],
+            "body": ["Inter", "sans-serif"],
+            "mono": ["JetBrains Mono", "monospace"]
+          }
+        }
+      }
+    }
+  </script>
+</head>
+
+<body class="bg-surface-container-lowest text-on-surface font-body min-h-screen flex flex-col">
+
+  <!-- Header -->
+  <header class="bg-surface/80 backdrop-blur-xl w-full top-0 sticky border-b border-glass-border z-40">
+    <div class="flex justify-between items-center w-full px-4 md:px-8 py-3 max-w-7xl mx-auto">
+      <a href="/docs" class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-surface-container border border-primary/30 flex items-center justify-center shadow-sm">
+          <span class="material-symbols-outlined text-primary text-xl">bolt</span>
+        </div>
+        <span class="font-display font-bold text-xl text-primary tracking-tight">FluxTransfer Docs</span>
+      </a>
+
+      <nav class="hidden md:flex items-center gap-8 text-sm font-medium text-on-surface-variant">
+        <a class="hover:text-primary transition-colors" href="/">Transfer App</a>
+        <a class="hover:text-primary transition-colors" href="/download">Download</a>
+        <a class="text-primary font-bold" href="/docs">Documentation</a>
+        <a class="hover:text-primary transition-colors" href="/security">Security</a>
+        <a class="hover:text-primary transition-colors" href="/faq">FAQ</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="flex-grow max-w-7xl mx-auto px-4 md:px-8 py-8 w-full flex flex-col md:flex-row gap-8">
+    <aside class="w-full md:w-64 flex-shrink-0">
+      <div class="sticky top-20 space-y-6">
+        <div>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-on-surface-variant mb-3">Documentation</h4>
+          <nav class="space-y-1 text-sm font-medium">
+            <a href="/docs" class="block px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-card">Overview</a>
+            <a href="/docs/getting-started" class="block px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-card">Getting Started</a>
+            <a href="/docs/devices" class="block px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-card">Device Setup</a>
+            <a href="/docs/security" class="block px-3 py-2 rounded-lg text-on-surface-variant hover:bg-surface-card">Security Architecture</a>
+            <a href="/docs/troubleshooting" class="block px-3 py-2 rounded-lg bg-primary/10 text-primary font-bold">Troubleshooting</a>
+          </nav>
+        </div>
+      </div>
+    </aside>
+
+    <article class="flex-1 max-w-3xl space-y-6 text-sm text-on-surface-variant leading-relaxed">
+      <div>
+        <div class="flex items-center gap-2 text-xs font-mono text-primary mb-2">
+          <span>DOCS</span> / <span>TROUBLESHOOTING</span>
+        </div>
+        <h1 class="font-display font-bold text-3xl text-on-surface mb-3">Troubleshooting & Diagnostics</h1>
+        <p class="text-base text-on-surface">Common connection errors, NAT traversal issues, and resolutions.</p>
+      </div>
+
+      <div class="p-6 rounded-2xl bg-surface-card border border-glass-border space-y-3">
+        <h3 class="font-display font-bold text-base text-on-surface">1. "WebRTC connection failed" (Symmetric NAT)</h3>
+        <p class="text-xs">
+          Occurs when one or both devices are behind strict corporate firewalls, university Wi-Fi, or cellular CGNAT where STUN hole-punching fails.
+        </p>
+        <p class="text-xs text-primary font-mono">Solution: Configure a TURN relay server (see TURN_SETUP_GUIDE.md in repository).</p>
+      </div>
+
+      <div class="p-6 rounded-2xl bg-surface-card border border-glass-border space-y-3">
+        <h3 class="font-display font-bold text-base text-on-surface">2. "Signaling server connection error"</h3>
+        <p class="text-xs">
+          The client could not connect to the WebSocket signaling server at <code class="font-mono text-primary">ws://localhost:8080</code>.
+        </p>
+        <p class="text-xs text-primary font-mono">Solution: Ensure the Node.js signaling server process is running (<code class="font-mono">npm start</code>).</p>
+      </div>
+
+      <div class="pt-6 border-t border-glass-border flex justify-between items-center text-xs">
+        <a href="/docs/security" class="text-on-surface-variant hover:text-primary">← Security Architecture</a>
+        <a href="/faq" class="text-primary font-bold hover:underline">FAQ →</a>
+      </div>
+    </article>
+  </main>
+</body>
+
+</html>

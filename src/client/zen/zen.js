@@ -50,7 +50,7 @@
       if (!container) {
         container = document.createElement('div');
         container.id = 'flux-zen-container';
-        const contentArea = document.querySelector('.content-area');
+        const contentArea = document.getElementById('zenDrawerBody') || document.querySelector('.content-area');
         if (contentArea) {
           contentArea.appendChild(container);
         } else {
@@ -142,9 +142,34 @@
         this.showGamePlayPopup();
 
         STATE.status = 'full';
-        this.updateEtaText(eta);
+        this.updateEtaText(eta, progressData);
       } catch (error) {
         console.error('Flux Zen error during progress update (shielded):', error);
+      }
+    }
+
+    updateEtaText(eta, progressData) {
+      const etaEl = document.getElementById('zenTransferETA') || document.getElementById('zenEtaDisplay');
+      if (etaEl) {
+        if (!isFinite(eta) || eta < 0) {
+          etaEl.textContent = '-- remaining';
+        } else if (eta < 60) {
+          etaEl.textContent = Math.ceil(eta) + 's remaining';
+        } else {
+          etaEl.textContent = Math.floor(eta / 60) + 'm ' + Math.ceil(eta % 60) + 's remaining';
+        }
+      }
+
+      if (progressData) {
+        const fileEl = document.getElementById('zenTransferFile');
+        const pctEl = document.getElementById('zenTransferPct');
+        const barEl = document.getElementById('zenProgressBar');
+        const speedEl = document.getElementById('zenTransferSpeed');
+
+        if (fileEl && progressData.fileName) fileEl.textContent = `Transferring ${progressData.fileName}`;
+        if (pctEl && progressData.percentage !== undefined) pctEl.textContent = `${Math.round(progressData.percentage)}%`;
+        if (barEl && progressData.percentage !== undefined) barEl.style.width = `${Math.round(progressData.percentage)}%`;
+        if (speedEl && progressData.speed) speedEl.textContent = progressData.speed;
       }
     }
 
@@ -152,7 +177,7 @@
       // When in full mode, place the container inside .content-area
       // for the side-by-side split-screen layout
       if (STATE.status === 'full') {
-        const contentArea = document.querySelector('.content-area');
+        const contentArea = document.getElementById('zenDrawerBody') || document.querySelector('.content-area');
         if (contentArea && this.container.parentElement !== contentArea) {
           contentArea.appendChild(this.container);
         }
@@ -257,45 +282,66 @@
     }
 
     renderFullPanel() {
-      const subtitleText = STATE.transferComplete 
-        ? `Transfer complete! 🎉 Feel free to finish your game or activity.`
-        : `Your transfer is continuing in the background. <span id="zenEtaDisplay">--</span> remaining`;
-
       this.container.innerHTML = `
-        <div class="flux-zen-panel" id="zenFullPanel">
-          <div class="zen-header">
-            <div class="zen-title"><span class="sparkle">✨</span> Flux Zen</div>
-            <div class="zen-actions">
-              <button class="zen-action-btn" id="zenMinimizeBtn" title="Minimize">➖</button>
-              <button class="zen-action-btn" id="zenCloseBtn" title="Close">✖</button>
+        <div class="h-full flex flex-col w-full bg-surface text-on-surface">
+          <!-- Header matching flux_zen_desktop_dashboard -->
+          <header class="flex justify-between items-center px-6 py-4 border-b border-glass-border shrink-0">
+            <div class="flex items-center gap-2.5">
+              <img src="/zen-icon.png" alt="Flux Zen Icon" class="w-6 h-6 rounded object-cover shadow-sm">
+              <h1 class="font-display font-bold text-lg text-on-surface">Flux Zen</h1>
             </div>
+            <div class="flex items-center gap-2">
+              <button id="zenMinimizeBtn" class="text-on-surface-variant hover:text-primary transition-colors w-8 h-8 rounded-full hover:bg-white/5 flex items-center justify-center" title="Minimize">
+                <span class="material-symbols-outlined text-sm">remove</span>
+              </button>
+              <button id="zenCloseBtn" class="text-on-surface-variant hover:text-red-400 transition-colors w-8 h-8 rounded-full hover:bg-white/5 flex items-center justify-center" title="Close">
+                <span class="material-symbols-outlined text-base">close</span>
+              </button>
+            </div>
+          </header>
+
+          <!-- Scrollable Body -->
+          <div class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Transfer Status Card (glass-panel glow-effect) -->
+            <section class="p-4 rounded-xl bg-surface-card border border-glass-border space-y-3 relative overflow-hidden shadow-lg">
+              <div class="flex justify-between items-center text-xs">
+                <span id="zenTransferFile" class="font-mono text-on-surface-variant uppercase tracking-wider truncate max-w-[240px]">Transferring in background...</span>
+                <span id="zenTransferPct" class="font-mono text-primary font-bold text-sm">--</span>
+              </div>
+              <div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
+                <div id="zenProgressBar" class="h-full bg-primary w-[0%] rounded-full shadow-[0_0_10px_rgba(78,222,163,0.5)] transition-all duration-300"></div>
+              </div>
+              <div class="flex justify-between items-center text-xs font-mono text-on-surface-variant pt-1">
+                <div class="flex items-center gap-1">
+                  <span class="material-symbols-outlined text-xs">speed</span>
+                  <span id="zenTransferSpeed">0 MB/s</span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <span class="material-symbols-outlined text-xs">schedule</span>
+                  <span id="zenTransferETA">-- remaining</span>
+                </div>
+              </div>
+            </section>
+
+            <!-- Navigation Tabs matching flux_zen_desktop_dashboard -->
+            <nav class="flex gap-2 border-b border-glass-border pb-1">
+              <button id="zenTabPlay" data-mode="play" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-primary border-b-2 border-primary transition-colors">Play</button>
+              <button id="zenTabDiscover" data-mode="discover" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-on-surface-variant hover:text-primary transition-colors">Discover</button>
+              <button id="zenTabZen" data-mode="zen" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-on-surface-variant hover:text-primary transition-colors">Zen</button>
+            </nav>
+
+            <!-- Mode Content Area -->
+            <div id="zenModeContent" class="w-full"></div>
           </div>
-          <div class="zen-subtitle" id="zenSubtitle">${subtitleText}</div>
-          <div class="zen-modes-tabs">
-            <div class="zen-mode-tab" id="zenTabPlay" data-mode="play">🎮 Play</div>
-            <div class="zen-mode-tab" id="zenTabDiscover" data-mode="discover">🧠 Discover</div>
-            <div class="zen-mode-tab" id="zenTabZen" data-mode="zen">🧘 Zen</div>
-          </div>
-          <div class="zen-mode-content" id="zenModeContent"></div>
         </div>
       `;
 
-      if (!STATE.transferComplete) {
-        this.updateEtaText(STATE.lastEta);
-      }
-
       // Wire header buttons
       document.getElementById('zenMinimizeBtn').onclick = () => {
-        this.stopActiveMode();
-        STATE.activeMode = null;
-        STATE.gameStateMode = 'menu';
-        this.render();
+        if (typeof window.toggleZenPanel === 'function') window.toggleZenPanel();
       };
       document.getElementById('zenCloseBtn').onclick = () => {
-        this.stopActiveMode();
-        STATE.activeMode = null;
-        STATE.gameStateMode = 'menu';
-        this.render();
+        if (typeof window.toggleZenPanel === 'function') window.toggleZenPanel();
       };
 
       // Wire tabs
@@ -420,64 +466,158 @@
             this.startMemoryGame(container);
           } else if (STATE.selectedGame === 'minesweeper') {
             this.startMinesweeperGame(container);
+          } else if (STATE.selectedGame === 'game2048') {
+            this.startGame2048(container);
           }
         }
       } else {
         STATE.gameStateMode = 'menu';
         container.innerHTML = `
-          <div class="zen-game-selector" style="max-height: 250px; overflow-y: auto; padding-right: 4px;">
-            <button class="zen-game-btn" id="btnPlaySnake">
-              <div>
-                <div class="zen-game-btn-title">🐍 Snake</div>
-                <div class="zen-game-btn-desc">Classic grid crawler. Arrow keys or touch.</div>
+          <div class="space-y-6 w-full text-left">
+            <!-- ETA-Aware Recommendation (Quick Pick Card matching Stitch) -->
+            <section class="gradient-card rounded-xl p-4 flex items-center justify-between border border-primary/20 bg-primary/5 shadow-md">
+              <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border shrink-0">
+                  <span class="material-symbols-outlined text-primary text-xl">videogame_asset</span>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2 mb-0.5">
+                    <span class="font-mono text-[10px] text-primary uppercase font-bold tracking-wider">QUICK PICK</span>
+                    <span class="w-1 h-1 bg-primary rounded-full"></span>
+                    <span class="font-mono text-[10px] text-on-surface-variant uppercase">2 MIN BREAK</span>
+                  </div>
+                  <h3 class="font-display font-semibold text-sm text-on-surface">Snake Classic</h3>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
-            <button class="zen-game-btn" id="btnPlayMemory">
-              <div>
-                <div class="zen-game-btn-title">🎴 Memory Match</div>
-                <div class="zen-game-btn-desc">Match emoji pairs under count.</div>
+              <button id="quickPickBtn" class="bg-primary text-background font-bold text-xs px-4 py-2 rounded-lg hover:brightness-110 active:scale-95 transition-all flex items-center gap-1.5 uppercase font-mono tracking-wider shrink-0 shadow">
+                <span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                PLAY
+              </button>
+            </section>
+
+            <!-- 2-Column Clean Game Grid matching Stitch -->
+            <section class="grid grid-cols-2 gap-4 w-full">
+              
+              <!-- Card 1: Snake -->
+              <div id="btnPlaySnake" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">videogame_asset</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">2-5 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Snake</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Classic retro</p>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
-            <button class="zen-game-btn" id="btnPlayMines">
-              <div>
-                <div class="zen-game-btn-title">💣 Minesweeper</div>
-                <div class="zen-game-btn-desc">Uncover cells without hitting mines.</div>
+
+              <!-- Card 2: 2048 -->
+              <div id="btnPlay2048" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">grid_view</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">5+ min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">2048</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Number puzzle</p>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
-            <button class="zen-game-btn" id="btnPlayTTT">
-              <div>
-                <div class="zen-game-btn-title">❌ Tic Tac Toe</div>
-                <div class="zen-game-btn-desc">3-in-a-row. vs AI, Local or vs Peer.</div>
+
+              <!-- Card 3: Memory Match -->
+              <div id="btnPlayMemory" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">dashboard</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">3-5 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Memory Match</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Brain training</p>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
-            <button class="zen-game-btn" id="btnPlayConnect4">
-              <div>
-                <div class="zen-game-btn-title">🔴 Connect Four</div>
-                <div class="zen-game-btn-desc">Drop discs. 4-in-a-row vs AI/Local/Peer.</div>
+
+              <!-- Card 4: Tic Tac Toe -->
+              <div id="btnPlayTTT" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">apps</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">1-3 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Tic Tac Toe</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Quick match</p>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
-            <button class="zen-game-btn" id="btnPlayPong">
-              <div>
-                <div class="zen-game-btn-title">🏓 Ping Pong</div>
-                <div class="zen-game-btn-desc">Bounce the ball. vs AI, Local or vs Peer.</div>
+
+              <!-- Card 5: Connect Four -->
+              <div id="btnPlayConnect4" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">blur_on</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">2-5 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Connect Four</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">4-in-a-row drop</p>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
-            <button class="zen-game-btn" id="btnPlayRPS">
-              <div>
-                <div class="zen-game-btn-title">✊ Rock Paper Scissors</div>
-                <div class="zen-game-btn-desc">Standard hand showdown vs AI or Peer.</div>
+
+              <!-- Card 6: Ping Pong -->
+              <div id="btnPlayPong" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">sports_tennis</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">2-5 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Ping Pong</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Bounce ball</p>
+                </div>
               </div>
-              <span>▶</span>
-            </button>
+
+              <!-- Card 7: Rock Paper Scissors -->
+              <div id="btnPlayRPS" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">front_hand</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">1-2 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Rock Paper Scissors</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Hand showdown</p>
+                </div>
+              </div>
+
+              <!-- Card 8: Minesweeper -->
+              <div id="btnPlayMines" class="gradient-card rounded-xl p-4 flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+                <div class="flex justify-between items-start">
+                  <div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+                    <span class="material-symbols-outlined text-on-surface">bomb</span>
+                  </div>
+                  <span class="px-2 py-1 rounded-md bg-surface-container-highest font-mono text-[10px] text-on-surface-variant border border-glass-border">5-10 min</span>
+                </div>
+                <div>
+                  <h4 class="font-display font-semibold text-sm text-on-surface group-hover:text-primary transition-colors">Minesweeper</h4>
+                  <p class="font-mono text-[10px] text-on-surface-variant mt-1">Logic challenge</p>
+                </div>
+              </div>
+
+            </section>
           </div>
         `;
 
+        document.getElementById('quickPickBtn').onclick = () => {
+          STATE.selectedGame = 'snake';
+          this.switchMode('play');
+        };
         document.getElementById('btnPlaySnake').onclick = () => {
           STATE.selectedGame = 'snake';
           this.switchMode('play');
@@ -488,6 +628,10 @@
         };
         document.getElementById('btnPlayMines').onclick = () => {
           STATE.selectedGame = 'minesweeper';
+          this.switchMode('play');
+        };
+        document.getElementById('btnPlay2048').onclick = () => {
+          STATE.selectedGame = 'game2048';
           this.switchMode('play');
         };
         document.getElementById('btnPlayTTT').onclick = () => {
@@ -507,6 +651,25 @@
           this.switchMode('play');
         };
       }
+    }
+
+    startGame2048(container) {
+      container.innerHTML = `
+        <div class="zen-game-container">
+          <div class="zen-game-header">
+            <button class="zen-game-back" id="zenBackBtn">← Back to Zen</button>
+            <span class="font-bold text-primary">2048</span>
+          </div>
+          <div id="zen2048Container"></div>
+        </div>
+      `;
+      document.getElementById('zenBackBtn').onclick = () => this.exitToGameMenu();
+      const game = new FluxZenGames.Game2048();
+      STATE.gameInstance = game;
+      game.init(document.getElementById('zen2048Container'), {
+        onWin: () => this.showGameOverScreen(container, '2048', 'You created 2048! 🎉'),
+        onGameOver: () => this.showGameOverScreen(container, '2048', 'Game Over!')
+      });
     }
 
     // ──── NEW ORCHESTRATION METHODS ────
@@ -896,12 +1059,29 @@
             </div>
           </div>
           
-          <!-- On-screen arrow pad for mobile/touch screens -->
-          <div class="zen-snake-controls">
-            <button class="zen-control-btn ctrl-up" id="ctrlUp">▲</button>
-            <button class="zen-control-btn ctrl-left" id="ctrlLeft">◀</button>
-            <button class="zen-control-btn ctrl-right" id="ctrlRight">▶</button>
-            <button class="zen-control-btn ctrl-down" id="ctrlDown">▼</button>
+          <!-- Touch Controls (Stitch D-Pad) -->
+          <div class="mt-6 w-full flex justify-center">
+            <div class="grid grid-cols-3 grid-rows-3 gap-2 w-44 h-44">
+              <div></div>
+              <button id="ctrlUp" class="d-pad-btn bg-surface-card border border-glass-border rounded-t-xl rounded-b-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_up</span>
+              </button>
+              <div></div>
+              <button id="ctrlLeft" class="d-pad-btn bg-surface-card border border-glass-border rounded-l-xl rounded-r-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_left</span>
+              </button>
+              <div class="bg-surface-container-lowest rounded-md flex items-center justify-center border border-glass-border">
+                <div class="w-2.5 h-2.5 rounded-full bg-primary/30"></div>
+              </div>
+              <button id="ctrlRight" class="d-pad-btn bg-surface-card border border-glass-border rounded-r-xl rounded-l-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_right</span>
+              </button>
+              <div></div>
+              <button id="ctrlDown" class="d-pad-btn bg-surface-card border border-glass-border rounded-b-xl rounded-t-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_down</span>
+              </button>
+              <div></div>
+            </div>
           </div>
         </div>
       `;

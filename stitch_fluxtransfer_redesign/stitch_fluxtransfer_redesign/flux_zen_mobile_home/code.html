@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+<title>Flux Zen</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@500&amp;family=Space+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-container": "#711419",
+                        "tertiary": "#ffb3af",
+                        "inverse-primary": "#006c49",
+                        "surface-container-high": "#222c28",
+                        "surface-tint": "#4edea3",
+                        "on-tertiary-fixed": "#410005",
+                        "inverse-surface": "#dae5df",
+                        "surface-container": "#18221e",
+                        "surface-variant": "#2d3733",
+                        "primary-fixed": "#6ffbbe",
+                        "on-secondary": "#003732",
+                        "on-tertiary": "#650911",
+                        "inverse-on-surface": "#29322f",
+                        "primary": "#4edea3",
+                        "surface-bright": "#323b37",
+                        "surface-container-highest": "#2d3733",
+                        "on-primary-container": "#00422b",
+                        "on-tertiary-fixed-variant": "#842225",
+                        "tertiary-fixed": "#ffdad7",
+                        "on-secondary-fixed": "#00201d",
+                        "tertiary-container": "#fc7c78",
+                        "on-surface-variant": "#bbcabf",
+                        "on-surface": "#dae5df",
+                        "surface": "#0c1512",
+                        "on-primary-fixed": "#002113",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed-dim": "#ffb3af",
+                        "secondary-fixed-dim": "#97d2c9",
+                        "glass-border": "rgba(255, 255, 255, 0.08)",
+                        "surface-dim": "#0c1512",
+                        "on-secondary-fixed-variant": "#0f4f49",
+                        "primary-container": "#10b981",
+                        "on-primary": "#003824",
+                        "on-background": "#dae5df",
+                        "error-container": "#93000a",
+                        "surface-container-low": "#141d1a",
+                        "background": "#0c1512",
+                        "secondary": "#97d2c9",
+                        "accent-gold": "#E8A33D",
+                        "text-warm": "#EDEAE2",
+                        "on-error": "#690005",
+                        "outline-variant": "#3c4a42",
+                        "outline": "#86948a",
+                        "secondary-container": "#13524b",
+                        "on-secondary-container": "#8ac3bb",
+                        "on-primary-fixed-variant": "#005236",
+                        "primary-fixed-dim": "#4edea3",
+                        "secondary-fixed": "#b3eee5",
+                        "on-error-container": "#ffdad6",
+                        "surface-card": "#16211C",
+                        "surface-container-lowest": "#07100d"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "2xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "stack-sm": "8px",
+                        "margin-mobile": "16px",
+                        "base": "4px",
+                        "stack-md": "16px",
+                        "margin-desktop": "40px",
+                        "stack-lg": "32px",
+                        "safe": "env(safe-area-inset-bottom, 16px)"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "display-lg": ["Space Grotesk"],
+                        "display-lg-mobile": ["Space Grotesk"],
+                        "label-caps": ["Inter"],
+                        "label-mono": ["JetBrains Mono"],
+                        "headline-md": ["Space Grotesk"],
+                        "body-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-md": ["16px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "display-lg": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "display-lg-mobile": ["36px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "label-caps": ["12px", { "lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "600" }],
+                        "label-mono": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-md": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body {
+            background-color: rgba(7, 16, 13, 0.9); /* Dark overlay simulating background app */
+        }
+        
+        .glass-panel {
+            background: linear-gradient(145deg, rgba(34, 44, 40, 0.9) 0%, rgba(24, 34, 30, 0.95) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .gradient-card {
+            background: linear-gradient(180deg, rgba(45, 55, 51, 0.5) 0%, rgba(24, 34, 30, 0.5) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Custom scrollbar for horizontal tabs */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="h-screen w-full flex items-end justify-center overflow-hidden font-body-md text-on-surface antialiased select-none">
+<!-- Bottom Sheet Container (NavigationDrawer adaptation) -->
+<div class="w-full max-w-md h-[85vh] bg-surface-container-high dark:bg-surface-container-highest backdrop-blur-md border-t border-glass-border shadow-lg rounded-t-2xl flex flex-col fixed bottom-0 z-[60] overflow-hidden transform transition-transform duration-300 translate-y-0">
+<!-- Drag Handle & Header -->
+<div class="px-margin-mobile pt-stack-sm pb-stack-md flex flex-col items-center sticky top-0 bg-surface-container-high/90 backdrop-blur-md z-10 border-b border-glass-border">
+<div class="w-12 h-1.5 bg-on-surface-variant/30 rounded-full mb-stack-md"></div>
+<div class="flex justify-between items-center w-full">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">psychology</span>
+<h2 class="font-headline-md text-headline-md text-on-surface tracking-tight">Flux Zen</h2>
+<span class="material-symbols-outlined text-accent-gold text-sm" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+</div>
+<button class="p-2 rounded-full hover:bg-surface-variant text-on-surface-variant transition-colors active:scale-95">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+</div>
+<!-- Scrollable Content Area -->
+<div class="flex-1 overflow-y-auto overflow-x-hidden p-margin-mobile flex flex-col gap-stack-lg pb-32">
+<!-- Transfer Mini-Status -->
+<div class="w-full bg-surface-container rounded-xl p-4 border border-glass-border flex items-center justify-between shadow-sm relative overflow-hidden">
+<!-- Progress Background -->
+<div class="absolute left-0 top-0 bottom-0 bg-primary-container/20 w-[72%] transition-all duration-1000 ease-in-out"></div>
+<div class="flex items-center gap-3 relative z-10">
+<div class="w-8 h-8 rounded-full bg-surface-bright flex items-center justify-center animate-pulse">
+<span class="material-symbols-outlined text-primary text-sm">bolt</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Active Transfer</span>
+<span class="font-label-mono text-label-mono text-primary font-bold">72%</span>
+</div>
+</div>
+<div class="font-label-mono text-label-mono text-on-surface-variant relative z-10">
+                    00:42 remaining
+                </div>
+</div>
+<!-- Horizontal Tabs -->
+<div class="flex overflow-x-auto hide-scrollbar gap-stack-sm pb-2">
+<button class="px-6 py-2.5 rounded-full bg-primary-container text-on-primary-container font-label-caps text-label-caps tracking-wide whitespace-nowrap active:scale-95 transition-transform flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px]">sports_esports</span>
+                    PLAY
+                </button>
+<button class="px-6 py-2.5 rounded-full bg-surface-variant text-on-surface-variant font-label-caps text-label-caps tracking-wide whitespace-nowrap active:scale-95 transition-transform hover:bg-surface-bright flex items-center gap-2 border border-glass-border">
+<span class="material-symbols-outlined text-[18px]">explore</span>
+                    DISCOVER
+                </button>
+<button class="px-6 py-2.5 rounded-full bg-surface-variant text-on-surface-variant font-label-caps text-label-caps tracking-wide whitespace-nowrap active:scale-95 transition-transform hover:bg-surface-bright flex items-center gap-2 border border-glass-border">
+<span class="material-symbols-outlined text-[18px]">self_improvement</span>
+                    BREATHE
+                </button>
+</div>
+<!-- Play Grid (Main Content) -->
+<div class="grid grid-cols-2 gap-stack-md w-full">
+<!-- Game Card 1 -->
+<div class="gradient-card rounded-2xl p-4 flex flex-col items-center justify-center gap-stack-md aspect-square active:scale-95 transition-transform relative overflow-hidden group cursor-pointer">
+<!-- Glow effect on hover -->
+<div class="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors duration-300"></div>
+<div class="w-16 h-16 rounded-xl bg-surface-container flex items-center justify-center border border-glass-border shadow-inner relative z-10">
+<span class="material-symbols-outlined text-3xl text-primary" style="font-variation-settings: 'FILL' 1;">gesture</span>
+</div>
+<div class="text-center relative z-10">
+<h3 class="font-body-lg text-body-lg text-on-surface font-semibold">Neon Snake</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-1">CLASSIC</p>
+</div>
+</div>
+<!-- Game Card 2 -->
+<div class="gradient-card rounded-2xl p-4 flex flex-col items-center justify-center gap-stack-md aspect-square active:scale-95 transition-transform relative overflow-hidden group cursor-pointer">
+<div class="absolute inset-0 bg-secondary/0 group-hover:bg-secondary/5 transition-colors duration-300"></div>
+<div class="w-16 h-16 rounded-xl bg-surface-container flex items-center justify-center border border-glass-border shadow-inner relative z-10">
+<span class="material-symbols-outlined text-3xl text-secondary" style="font-variation-settings: 'FILL' 1;">grid_view</span>
+</div>
+<div class="text-center relative z-10">
+<h3 class="font-body-lg text-body-lg text-on-surface font-semibold">Memory</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-1">PUZZLE</p>
+</div>
+</div>
+<!-- Game Card 3 -->
+<div class="gradient-card rounded-2xl p-4 flex flex-col items-center justify-center gap-stack-md aspect-square active:scale-95 transition-transform relative overflow-hidden group cursor-pointer">
+<div class="absolute inset-0 bg-tertiary/0 group-hover:bg-tertiary/5 transition-colors duration-300"></div>
+<div class="w-16 h-16 rounded-xl bg-surface-container flex items-center justify-center border border-glass-border shadow-inner relative z-10">
+<span class="material-symbols-outlined text-3xl text-tertiary" style="font-variation-settings: 'FILL' 1;">emergency</span>
+</div>
+<div class="text-center relative z-10">
+<h3 class="font-body-lg text-body-lg text-on-surface font-semibold">Mines</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-1">LOGIC</p>
+</div>
+</div>
+<!-- Game Card 4 -->
+<div class="gradient-card rounded-2xl p-4 flex flex-col items-center justify-center gap-stack-md aspect-square active:scale-95 transition-transform relative overflow-hidden group cursor-pointer">
+<div class="absolute inset-0 bg-accent-gold/0 group-hover:bg-accent-gold/5 transition-colors duration-300"></div>
+<div class="w-16 h-16 rounded-xl bg-surface-container flex items-center justify-center border border-glass-border shadow-inner relative z-10">
+<span class="material-symbols-outlined text-3xl text-accent-gold" style="font-variation-settings: 'FILL' 1;">123</span>
+</div>
+<div class="text-center relative z-10">
+<h3 class="font-body-lg text-body-lg text-on-surface font-semibold">2048</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-1">NUMBERS</p>
+</div>
+</div>
+</div>
+<div class="text-center mt-4">
+<p class="font-body-md text-body-md text-on-surface-variant/70 italic">More games unlock at 100% transfer.</p>
+</div>
+</div>
+<!-- Sticky Bottom Navigation (Adapted from NavigationDrawer structure for this specific view) -->
+<div class="absolute bottom-0 left-0 right-0 bg-surface-container-high/95 backdrop-blur-md border-t border-glass-border px-margin-mobile pb-safe pt-stack-sm flex justify-around items-center h-20 shadow-[0_-4px_20px_rgba(0,0,0,0.3)]">
+<!-- Active Tab -->
+<button class="flex flex-col items-center gap-1 min-w-[64px] active:scale-95 transition-transform">
+<div class="w-16 h-8 rounded-full bg-primary-container flex items-center justify-center">
+<span class="material-symbols-outlined text-on-primary-container" style="font-variation-settings: 'FILL' 1;">sports_esports</span>
+</div>
+<span class="font-label-caps text-[10px] tracking-widest text-primary font-semibold">PLAY</span>
+</button>
+<!-- Inactive Tab -->
+<button class="flex flex-col items-center gap-1 min-w-[64px] active:scale-95 transition-transform group">
+<div class="w-16 h-8 rounded-full flex items-center justify-center group-hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">auto_awesome</span>
+</div>
+<span class="font-label-caps text-[10px] tracking-widest text-on-surface-variant">DISCOVER</span>
+</button>
+<!-- Inactive Tab -->
+<button class="flex flex-col items-center gap-1 min-w-[64px] active:scale-95 transition-transform group">
+<div class="w-16 h-8 rounded-full flex items-center justify-center group-hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">waves</span>
+</div>
+<span class="font-label-caps text-[10px] tracking-widest text-on-surface-variant">ZEN</span>
+</button>
+</div>
+</div>
+</body></html>

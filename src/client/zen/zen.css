@@ -1,5 +1,26 @@
 /* Flux Zen CSS Styling System */
 
+/* Stitch Utility Classes */
+.glass-panel {
+  background: linear-gradient(180deg, rgba(22, 33, 28, 0.8) 0%, rgba(12, 21, 18, 0.9) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.gradient-card {
+  background: linear-gradient(145deg, rgba(34, 44, 40, 0.4) 0%, rgba(20, 29, 26, 0.4) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Hide scrollbars for single primary scroll UX */
+#zenDrawerBody::-webkit-scrollbar,
+#zenPanel::-webkit-scrollbar,
+#flux-zen-container::-webkit-scrollbar {
+  width: 0px;
+  display: none;
+  background: transparent;
+}
+
 /* ──── Main Containers ──── */
 .flux-zen-panel {
   margin-top: 24px;

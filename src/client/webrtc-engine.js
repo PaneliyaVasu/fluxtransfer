@@ -17,12 +17,43 @@
   const BUFFER_HIGH_WATERMARK = 1024 * 1024; // 1 MB
   const BUFFER_LOW_WATERMARK = 256 * 1024; // 256 KB
   const SIGNALING_TIMEOUT_MS = 30000; // 30 seconds
+  const ICE_RESTART_DELAY_MS = 2000;  // wait before restarting ICE
 
+  // ─── ICE Server Configuration ─────────────────────────────────────────────
+  // STUN: discovers public IP (works ~60-80% of NAT types)
+  // TURN: relays traffic when STUN punch-through fails (symmetric NAT, CGNAT,
+  //       mobile carriers, corporate firewalls). Required for cross-network.
   const DEFAULT_ICE_SERVERS = [
+    // Google STUN (no auth needed, widely available)
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' }
+    // Open Relay (metered.ca) — free STUN
+    { urls: 'stun:openrelay.metered.ca:80' },
+    // Open Relay (metered.ca) — free TURN (no account required)
+    // Covers port 80 (HTTP-friendly, firewall bypass) and 443 (HTTPS/TLS)
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turns:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:80?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    // Cloudflare STUN (highly reliable, global)
+    { urls: 'stun:stun.cloudflare.com:3478' },
   ];
 
   class FluxWebRTCEngine {
@@ -39,7 +70,22 @@
      * @param {Function} [config.onPeerLeft] - () => void
      */
     constructor(config = {}) {
-      this.signalingUrl = config.signalingUrl || (window.location.protocol === 'https:' ? `wss://${window.location.host}` : `ws://${window.location.hostname}:8080`);
+      // Smart signaling URL detection:
+      // - HTTPS deployment: WebSocket on same host (wss://yoursite.com)
+      // - Local dev (npm start): unified server on same port
+      // - Local dev (npm run dev with separate static serve): fallback to :8080
+      let defaultSignalingUrl;
+      if (window.location.protocol === 'https:') {
+        defaultSignalingUrl = `wss://${window.location.host}`;
+      } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        // In dev: try same port first (unified server), fallback to :8080
+        const devPort = window.location.port === '8080' ? window.location.port : '8080';
+        defaultSignalingUrl = `ws://localhost:${devPort}`;
+      } else {
+        // LAN IP or other: use same host and port
+        defaultSignalingUrl = `ws://${window.location.host}`;
+      }
+      this.signalingUrl = config.signalingUrl || defaultSignalingUrl;
       this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
 
       // Event Callbacks
@@ -189,12 +235,7 @@
 
       this.pc = new RTCPeerConnection(pcConfig);
 
-      // Relay ICE candidates to peer via signaling server
-      this.pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          this._sendSignaling({ type: 'ice-candidate', candidate: event.candidate });
-        }
-      };
+      // Relay ICE candidates to peer via signaling server — now moved inside _createPeerConnection body
 
       // Handle ICE Connection State changes
       this.pc.oniceconnectionstatechange = () => {
@@ -202,16 +243,37 @@
         console.log(`[WebRTC Engine] ICE State: ${state}`);
 
         if (state === 'connected' || state === 'completed') {
-          this.onStatusChange('P2P Direct Connection Established! ⚡', 'success');
+          // Determine connection type: relay vs direct
+          this._reportConnectionType();
           if (this.signalingTimer) clearTimeout(this.signalingTimer);
         } else if (state === 'failed') {
-          this.onStatusChange('Direct P2P connection failed', 'error');
-          this.onError(
-            'WebRTC connection failed. Direct STUN hole-punching was unsuccessful due to restrictive/symmetric NAT. Consider configuring a TURN relay server.',
-            'ERR_ICE_FAILED'
-          );
+          // Attempt ICE restart first before giving up
+          if (!this._iceRestartAttempted) {
+            this._iceRestartAttempted = true;
+            this.onStatusChange('Direct P2P failed — attempting relay fallback…', 'info');
+            setTimeout(() => this._restartICE(), ICE_RESTART_DELAY_MS);
+          } else {
+            this.onStatusChange('Connection failed — check network or firewall', 'error');
+            this.onError(
+              'WebRTC connection failed after ICE restart. Both direct (STUN) and relayed (TURN) paths failed. Check firewall settings.',
+              'ERR_ICE_FAILED'
+            );
+          }
         } else if (state === 'disconnected') {
           this.onStatusChange('P2P connection interrupted', 'warning');
+        }
+      };
+
+      // Track ICE candidate types gathered (host/srflx/relay)
+      this.pc.onicegatheringstatechange = () => {
+        console.log(`[WebRTC Engine] ICE Gathering: ${this.pc.iceGatheringState}`);
+      };
+
+      this.pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          const type = event.candidate.type || '';
+          console.log(`[WebRTC Engine] ICE Candidate gathered: ${type} — ${event.candidate.address || event.candidate.candidate}`);
+          this._sendSignaling({ type: 'ice-candidate', candidate: event.candidate });
         }
       };
 
@@ -224,10 +286,111 @@
     }
 
     /**
+     * Inspect the active ICE candidate pair to report connection type
+     * (direct P2P vs TURN relay). Called after ICE reaches connected/completed.
+     */
+    async _reportConnectionType() {
+      if (!this.pc) return;
+      try {
+        const stats = await this.pc.getStats();
+        let usingRelay = false;
+        let localType = 'unknown';
+        stats.forEach((report) => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            const local = stats.get(report.localCandidateId);
+            if (local) {
+              localType = local.candidateType || 'unknown';
+              usingRelay = (localType === 'relay');
+            }
+          }
+        });
+        if (usingRelay) {
+          this.onStatusChange('Connected via TURN relay ⚡ (cross-network mode)', 'success');
+          console.log('[WebRTC Engine] Connection type: RELAYED (TURN)');
+        } else {
+          this.onStatusChange('P2P Direct Connection Established ⚡', 'success');
+          console.log(`[WebRTC Engine] Connection type: DIRECT (${localType})`);
+        }
+      } catch (_) {
+        this.onStatusChange('P2P Connection Established ⚡', 'success');
+      }
+    }
+
+    /**
+     * ICE Restart — retry ICE negotiation with relay-only (TURN) policy.
+     * Called automatically on first ICE failure.
+     */
+    async _restartICE() {
+      if (!this.pc || this.pc.connectionState === 'closed') return;
+      console.log('[WebRTC Engine] Attempting ICE restart with relay-only policy…');
+
+      const pcConfig = {
+        iceServers: this.iceServers,
+        iceTransportPolicy: 'relay', // Force TURN relay — bypasses symmetric NAT
+        iceCandidatePoolSize: 4
+      };
+
+      try {
+        this.pc.close();
+        this.pc = new RTCPeerConnection(pcConfig);
+
+        // Re-bind all handlers on new PC
+        this.pc.oniceconnectionstatechange = this._createICEStateHandler();
+        this.pc.onicegatheringstatechange = () => {
+          console.log(`[WebRTC Engine] ICE Gathering (restart): ${this.pc.iceGatheringState}`);
+        };
+        this.pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            this._sendSignaling({ type: 'ice-candidate', candidate: event.candidate });
+          }
+        };
+        this.pc.ondatachannel = (event) => {
+          this.dataChannel = event.channel;
+          this._setupDataChannelEvents();
+        };
+
+        if (this.role === 'initiator') {
+          this.dataChannel = this.pc.createDataChannel('flux-file-channel', { ordered: true });
+          this._setupDataChannelEvents();
+          const offer = await this.pc.createOffer({ iceRestart: true });
+          await this.pc.setLocalDescription(offer);
+          this._sendSignaling({ type: 'offer', offer: this.pc.localDescription });
+        }
+      } catch (err) {
+        console.error('[WebRTC Engine] ICE restart failed:', err);
+        this.onError('Relay fallback failed: ' + err.message, 'ERR_ICE_RESTART');
+      }
+    }
+
+    /**
+     * Build an ICE state change handler for use after restart.
+     * Does not attempt another restart (prevents infinite loop).
+     */
+    _createICEStateHandler() {
+      return () => {
+        const state = this.pc && this.pc.iceConnectionState;
+        console.log(`[WebRTC Engine] ICE State (after restart): ${state}`);
+        if (state === 'connected' || state === 'completed') {
+          this._reportConnectionType();
+          if (this.signalingTimer) clearTimeout(this.signalingTimer);
+        } else if (state === 'failed') {
+          this.onStatusChange('All connection paths failed', 'error');
+          this.onError(
+            'Connection failed: Both direct P2P (STUN) and relayed (TURN) paths failed. Try a different network or check firewall.',
+            'ERR_ICE_FINAL_FAIL'
+          );
+        } else if (state === 'disconnected') {
+          this.onStatusChange('P2P connection interrupted', 'warning');
+        }
+      };
+    }
+
+    /**
      * Initiator starts offer negotiation
      */
     async _initiatePeerConnection() {
       this._createPeerConnection();
+      this._iceRestartAttempted = false; // reset for new session
 
       // Create DataChannel (Initiator creates channel)
       this.dataChannel = this.pc.createDataChannel('flux-file-channel', {

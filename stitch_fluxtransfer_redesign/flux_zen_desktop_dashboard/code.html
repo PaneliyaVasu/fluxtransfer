@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Flux Zen Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=JetBrains+Mono:wght@500&amp;family=Space+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-tertiary-container": "#711419",
+                      "tertiary": "#ffb3af",
+                      "inverse-primary": "#006c49",
+                      "surface-container-high": "#222c28",
+                      "surface-tint": "#4edea3",
+                      "on-tertiary-fixed": "#410005",
+                      "inverse-surface": "#dae5df",
+                      "surface-container": "#18221e",
+                      "surface-variant": "#2d3733",
+                      "primary-fixed": "#6ffbbe",
+                      "on-secondary": "#003732",
+                      "on-tertiary": "#650911",
+                      "inverse-on-surface": "#29322f",
+                      "primary": "#4edea3",
+                      "surface-bright": "#323b37",
+                      "surface-container-highest": "#2d3733",
+                      "on-primary-container": "#00422b",
+                      "on-tertiary-fixed-variant": "#842225",
+                      "tertiary-fixed": "#ffdad7",
+                      "on-secondary-fixed": "#00201d",
+                      "tertiary-container": "#fc7c78",
+                      "on-surface-variant": "#bbcabf",
+                      "on-surface": "#dae5df",
+                      "surface": "#0c1512",
+                      "on-primary-fixed": "#002113",
+                      "error": "#ffb4ab",
+                      "tertiary-fixed-dim": "#ffb3af",
+                      "secondary-fixed-dim": "#97d2c9",
+                      "glass-border": "rgba(255, 255, 255, 0.08)",
+                      "surface-dim": "#0c1512",
+                      "on-secondary-fixed-variant": "#0f4f49",
+                      "primary-container": "#10b981",
+                      "on-primary": "#003824",
+                      "on-background": "#dae5df",
+                      "error-container": "#93000a",
+                      "surface-container-low": "#141d1a",
+                      "background": "#0c1512",
+                      "secondary": "#97d2c9",
+                      "accent-gold": "#E8A33D",
+                      "text-warm": "#EDEAE2",
+                      "on-error": "#690005",
+                      "outline-variant": "#3c4a42",
+                      "outline": "#86948a",
+                      "secondary-container": "#13524b",
+                      "on-secondary-container": "#8ac3bb",
+                      "on-primary-fixed-variant": "#005236",
+                      "primary-fixed-dim": "#4edea3",
+                      "secondary-fixed": "#b3eee5",
+                      "on-error-container": "#ffdad6",
+                      "surface-card": "#16211C",
+                      "surface-container-lowest": "#07100d"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "gutter": "24px",
+                      "stack-sm": "8px",
+                      "margin-mobile": "16px",
+                      "base": "4px",
+                      "stack-md": "16px",
+                      "margin-desktop": "40px",
+                      "stack-lg": "32px"
+              },
+              "fontFamily": {
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "display-lg": [
+                              "Space Grotesk"
+                      ],
+                      "display-lg-mobile": [
+                              "Space Grotesk"
+                      ],
+                      "label-caps": [
+                              "Inter"
+                      ],
+                      "label-mono": [
+                              "JetBrains Mono"
+                      ],
+                      "headline-md": [
+                              "Space Grotesk"
+                      ],
+                      "body-lg": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "display-lg-mobile": [
+                              "36px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "label-caps": [
+                              "12px",
+                              {
+                                      "lineHeight": "1",
+                                      "letterSpacing": "0.1em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "label-mono": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: linear-gradient(180deg, rgba(22, 33, 28, 0.8) 0%, rgba(12, 21, 18, 0.9) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        }
+        .gradient-card {
+            background: linear-gradient(145deg, rgba(34, 44, 40, 0.4) 0%, rgba(20, 29, 26, 0.4) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .glow-effect::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120%;
+            height: 120%;
+            background: radial-gradient(circle, rgba(78, 222, 163, 0.12) 0%, transparent 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+        /* Hide scrollbar for clean UI */
+        ::-webkit-scrollbar {
+            width: 0px;
+            background: transparent;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface min-h-screen font-body-md overflow-hidden flex justify-end">
+<!-- Dashboard Overlay -->
+<div class="fixed inset-0 pointer-events-none z-0">
+
+</div>
+<!-- Main Panel -->
+<aside class="relative z-10 w-[520px] h-screen bg-surface/80 backdrop-blur-xl border-l border-glass-border shadow-2xl shadow-primary/5 flex flex-col">
+<!-- Header -->
+<header class="flex justify-between items-center px-margin-desktop py-stack-lg border-b border-glass-border shrink-0">
+<button class="text-on-surface-variant hover:text-primary transition-colors flex items-center justify-center w-10 h-10 rounded-full hover:bg-white/5">
+<span class="material-symbols-outlined" data-icon="arrow_back">arrow_back</span>
+</button>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-accent-gold" data-icon="sparkles" data-weight="fill" style="font-variation-settings: 'FILL' 1;">arrow_back_ios_new</span>
+<h1 class="font-headline-md text-headline-md text-on-surface">Flux Zen</h1>
+</div>
+<div class="flex items-center gap-2">
+<button class="text-on-surface-variant hover:text-primary transition-colors w-10 h-10 rounded-full hover:bg-white/5 flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="minimize">minimize</span>
+</button>
+<button class="text-on-surface-variant hover:error transition-colors w-10 h-10 rounded-full hover:bg-white/5 flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="close">close</span>
+</button>
+</div>
+</header>
+<!-- Scrollable Content -->
+<div class="flex-1 overflow-y-auto px-margin-desktop py-stack-lg space-y-stack-lg pb-24">
+<!-- Transfer Status Card -->
+<section class="glass-panel rounded-xl p-stack-md flex flex-col gap-stack-sm glow-effect relative">
+<div class="flex justify-between items-center">
+<span class="font-label-caps text-label-caps text-on-surface-variant uppercase">Transferring Project_Omega.zip</span>
+<span class="font-label-mono text-label-mono text-primary">72%</span>
+</div>
+<div class="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[72%] rounded-full shadow-[0_0_10px_rgba(78,222,163,0.5)]"></div>
+</div>
+<div class="flex justify-between items-center pt-2">
+<div class="flex items-center gap-1 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm" data-icon="speed">speed</span>
+<span class="font-label-mono text-label-mono">17.2 MB/s</span>
+</div>
+<div class="flex items-center gap-1 text-on-surface-variant">
+<span class="material-symbols-outlined text-sm" data-icon="schedule">schedule</span>
+<span class="font-label-mono text-label-mono">00:42 remaining</span>
+</div>
+</div>
+</section>
+<!-- ETA-Aware Recommendation -->
+<section class="gradient-card rounded-xl p-stack-md flex items-center justify-between border border-primary/20 bg-primary/5">
+<div class="flex items-center gap-4">
+<div class="w-12 h-12 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border">
+<span class="material-symbols-outlined text-primary" data-icon="videogame_asset">videogame_asset</span>
+</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="font-label-caps text-label-caps text-primary uppercase">Quick Pick</span>
+<span class="w-1 h-1 bg-primary rounded-full"></span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">2 MIN BREAK</span>
+</div>
+<h3 class="font-body-md text-body-md text-on-surface font-semibold">Snake Classic</h3>
+</div>
+</div>
+<button class="bg-primary-container text-on-primary-container hover:brightness-110 active:scale-95 transition-all px-4 py-2 rounded-lg font-label-caps text-label-caps uppercase flex items-center gap-2">
+<span class="material-symbols-outlined text-sm" data-icon="play_arrow" data-weight="fill" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+                    Play
+                </button>
+</section>
+<!-- Tab Navigation -->
+<nav class="flex gap-2 border-b border-glass-border pb-1">
+<button class="px-4 py-2 font-label-caps text-label-caps text-primary border-b-2 border-primary uppercase tracking-wider">Play</button>
+<button class="px-4 py-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors uppercase tracking-wider">Discover</button>
+<button class="px-4 py-2 font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors uppercase tracking-wider">Zen</button>
+</nav>
+<!-- Play Grid -->
+<section class="grid grid-cols-2 gap-stack-md">
+<!-- Game Card 1 -->
+<div class="gradient-card rounded-xl p-stack-md flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+<div class="flex justify-between items-start">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-on-surface" data-icon="videogame_asset">videogame_asset</span>
+</div>
+<span class="px-2 py-1 rounded-md bg-surface-container-highest font-label-mono text-[10px] text-on-surface-variant border border-glass-border">2-5 min</span>
+</div>
+<div>
+<h4 class="font-body-md text-body-md text-on-surface font-semibold">Snake</h4>
+<p class="font-label-caps text-[10px] text-on-surface-variant mt-1 capitalize-none">Classic retro</p>
+</div>
+</div>
+<!-- Game Card 2 -->
+<div class="gradient-card rounded-xl p-stack-md flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+<div class="flex justify-between items-start">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-on-surface" data-icon="grid_view">grid_view</span>
+</div>
+<span class="px-2 py-1 rounded-md bg-surface-container-highest font-label-mono text-[10px] text-on-surface-variant border border-glass-border">5+ min</span>
+</div>
+<div>
+<h4 class="font-body-md text-body-md text-on-surface font-semibold">2048</h4>
+<p class="font-label-caps text-[10px] text-on-surface-variant mt-1 capitalize-none">Number puzzle</p>
+</div>
+</div>
+<!-- Game Card 3 -->
+<div class="gradient-card rounded-xl p-stack-md flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+<div class="flex justify-between items-start">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-on-surface" data-icon="dashboard">dashboard</span>
+</div>
+<span class="px-2 py-1 rounded-md bg-surface-container-highest font-label-mono text-[10px] text-on-surface-variant border border-glass-border">3-5 min</span>
+</div>
+<div>
+<h4 class="font-body-md text-body-md text-on-surface font-semibold">Memory Match</h4>
+<p class="font-label-caps text-[10px] text-on-surface-variant mt-1 capitalize-none">Brain training</p>
+</div>
+</div>
+<!-- Game Card 4 -->
+<div class="gradient-card rounded-xl p-stack-md flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group">
+<div class="flex justify-between items-start">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-on-surface" data-icon="apps">apps</span>
+</div>
+<span class="px-2 py-1 rounded-md bg-surface-container-highest font-label-mono text-[10px] text-on-surface-variant border border-glass-border">1-3 min</span>
+</div>
+<div>
+<h4 class="font-body-md text-body-md text-on-surface font-semibold">Tic Tac Toe</h4>
+<p class="font-label-caps text-[10px] text-on-surface-variant mt-1 capitalize-none">Quick match</p>
+</div>
+</div>
+<!-- Game Card 5 -->
+<div class="gradient-card rounded-xl p-stack-md flex flex-col gap-3 hover:bg-white/5 hover:border-primary/30 transition-all cursor-pointer group col-span-2">
+<div class="flex justify-between items-center">
+<div class="flex items-center gap-3">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center border border-glass-border group-hover:border-primary/50 transition-colors">
+<span class="material-symbols-outlined text-on-surface" data-icon="bomb">bomb</span>
+</div>
+<div>
+<h4 class="font-body-md text-body-md text-on-surface font-semibold">Minesweeper</h4>
+<p class="font-label-caps text-[10px] text-on-surface-variant mt-1 capitalize-none">Logic challenge</p>
+</div>
+</div>
+<span class="px-2 py-1 rounded-md bg-surface-container-highest font-label-mono text-[10px] text-on-surface-variant border border-glass-border">5-10 min</span>
+</div>
+</div>
+</section>
+</div>
+<!-- Bottom Fade -->
+<div class="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-surface-container-high/90 to-transparent pointer-events-none"></div>
+</aside>
+</body></html>

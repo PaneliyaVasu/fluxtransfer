@@ -1554,7 +1554,215 @@
 
     stop() {
       this.running = false;
-      this.container.innerHTML = '';
+      if (this.container) this.container.innerHTML = '';
+    }
+  }
+
+  class Game2048 {
+    constructor() {
+      this.grid = [];
+      this.score = 0;
+      this.running = false;
+      this.container = null;
+      this.onWin = () => {};
+      this.onGameOver = () => {};
+    }
+
+    init(container, callbacks = {}) {
+      this.container = container;
+      this.onWin = callbacks.onWin || (() => {});
+      this.onGameOver = callbacks.onGameOver || (() => {});
+      this.grid = Array(4).fill(null).map(() => Array(4).fill(0));
+      this.score = 0;
+      this.running = true;
+
+      this.spawnTile();
+      this.spawnTile();
+      this.render();
+      this.bindControls();
+    }
+
+    spawnTile() {
+      const empty = [];
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 4; c++) {
+          if (this.grid[r][c] === 0) empty.push({ r, c });
+        }
+      }
+      if (empty.length > 0) {
+        const { r, c } = empty[Math.floor(Math.random() * empty.length)];
+        this.grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+      }
+    }
+
+    bindControls() {
+      this.handleKeyDown = (e) => {
+        if (!this.running) return;
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+          e.preventDefault();
+        }
+        let moved = false;
+        if (e.key === 'ArrowUp' || e.key === 'w') { moved = this.moveUp(); }
+        else if (e.key === 'ArrowDown' || e.key === 's') { moved = this.moveDown(); }
+        else if (e.key === 'ArrowLeft' || e.key === 'a') { moved = this.moveLeft(); }
+        else if (e.key === 'ArrowRight' || e.key === 'd') { moved = this.moveRight(); }
+        if (moved) {
+          this.spawnTile();
+          this.render();
+          this.checkState();
+        }
+      };
+      window.addEventListener('keydown', this.handleKeyDown);
+    }
+
+    moveLeft() {
+      let moved = false;
+      for (let r = 0; r < 4; r++) {
+        let row = this.grid[r].filter(val => val !== 0);
+        for (let c = 0; c < row.length - 1; c++) {
+          if (row[c] === row[c + 1]) {
+            row[c] *= 2;
+            this.score += row[c];
+            row.splice(c + 1, 1);
+            moved = true;
+          }
+        }
+        while (row.length < 4) row.push(0);
+        if (JSON.stringify(this.grid[r]) !== JSON.stringify(row)) moved = true;
+        this.grid[r] = row;
+      }
+      return moved;
+    }
+
+    moveRight() {
+      let moved = false;
+      for (let r = 0; r < 4; r++) {
+        let row = this.grid[r].filter(val => val !== 0);
+        for (let c = row.length - 1; c > 0; c--) {
+          if (row[c] === row[c - 1]) {
+            row[c] *= 2;
+            this.score += row[c];
+            row.splice(c - 1, 1);
+            moved = true;
+          }
+        }
+        while (row.length < 4) row.unshift(0);
+        if (JSON.stringify(this.grid[r]) !== JSON.stringify(row)) moved = true;
+        this.grid[r] = row;
+      }
+      return moved;
+    }
+
+    moveUp() {
+      let moved = false;
+      for (let c = 0; c < 4; c++) {
+        let col = [this.grid[0][c], this.grid[1][c], this.grid[2][c], this.grid[3][c]].filter(v => v !== 0);
+        for (let r = 0; r < col.length - 1; r++) {
+          if (col[r] === col[r + 1]) {
+            col[r] *= 2;
+            this.score += col[r];
+            col.splice(r + 1, 1);
+            moved = true;
+          }
+        }
+        while (col.length < 4) col.push(0);
+        for (let r = 0; r < 4; r++) {
+          if (this.grid[r][c] !== col[r]) moved = true;
+          this.grid[r][c] = col[r];
+        }
+      }
+      return moved;
+    }
+
+    moveDown() {
+      let moved = false;
+      for (let c = 0; c < 4; c++) {
+        let col = [this.grid[0][c], this.grid[1][c], this.grid[2][c], this.grid[3][c]].filter(v => v !== 0);
+        for (let r = col.length - 1; r > 0; r--) {
+          if (col[r] === col[r - 1]) {
+            col[r] *= 2;
+            this.score += col[r];
+            col.splice(r - 1, 1);
+            moved = true;
+          }
+        }
+        while (col.length < 4) col.unshift(0);
+        for (let r = 0; r < 4; r++) {
+          if (this.grid[r][c] !== col[r]) moved = true;
+          this.grid[r][c] = col[r];
+        }
+      }
+      return moved;
+    }
+
+    checkState() {
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 4; c++) {
+          if (this.grid[r][c] === 2048) { this.onWin(); }
+          if (this.grid[r][c] === 0) return;
+          if (r < 3 && this.grid[r][c] === this.grid[r + 1][c]) return;
+          if (c < 3 && this.grid[r][c] === this.grid[r][c + 1]) return;
+        }
+      }
+      this.running = false;
+      this.onGameOver();
+    }
+
+    render() {
+      if (!this.container) return;
+      this.container.innerHTML = `
+        <div class="zen-game-container">
+          <div class="zen-game-header">
+            <span class="font-mono text-primary font-bold">2048</span>
+            <span class="font-mono text-on-surface">Score: ${this.score}</span>
+          </div>
+          <div class="grid grid-cols-4 gap-2 bg-surface-card p-3 rounded-xl border border-glass-border w-64 h-64">
+            ${this.grid.map(row => row.map(val => `
+              <div class="flex items-center justify-center rounded-lg font-mono font-bold text-sm ${
+                val === 0 ? 'bg-surface/40 text-transparent' :
+                val === 2 ? 'bg-primary/20 text-primary' :
+                val === 4 ? 'bg-primary/30 text-primary' :
+                val === 8 ? 'bg-accent-gold/30 text-accent-gold' :
+                val === 16 ? 'bg-accent-gold/50 text-accent-gold' :
+                'bg-primary text-background'
+              }">
+                ${val || ''}
+              </div>
+            `).join('')).join('')}
+          </div>
+          <!-- Touch Controls (Stitch D-Pad) -->
+          <div class="mt-6 w-full flex justify-center">
+            <div class="grid grid-cols-3 grid-rows-3 gap-2 w-44 h-44">
+              <div></div>
+              <button onclick="window.FluxZenGame2048?.moveUp(); window.FluxZenGame2048?.render();" class="d-pad-btn bg-surface-card border border-glass-border rounded-t-xl rounded-b-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_up</span>
+              </button>
+              <div></div>
+              <button onclick="window.FluxZenGame2048?.moveLeft(); window.FluxZenGame2048?.render();" class="d-pad-btn bg-surface-card border border-glass-border rounded-l-xl rounded-r-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_left</span>
+              </button>
+              <div class="bg-surface-container-lowest rounded-md flex items-center justify-center border border-glass-border">
+                <div class="w-2.5 h-2.5 rounded-full bg-primary/30"></div>
+              </div>
+              <button onclick="window.FluxZenGame2048?.moveRight(); window.FluxZenGame2048?.render();" class="d-pad-btn bg-surface-card border border-glass-border rounded-r-xl rounded-l-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_right</span>
+              </button>
+              <div></div>
+              <button onclick="window.FluxZenGame2048?.moveDown(); window.FluxZenGame2048?.render();" class="d-pad-btn bg-surface-card border border-glass-border rounded-b-xl rounded-t-md flex items-center justify-center text-on-surface-variant hover:text-primary active:scale-95 transition-all">
+                <span class="material-symbols-outlined text-2xl">keyboard_arrow_down</span>
+              </button>
+              <div></div>
+            </div>
+          </div>
+        </div>
+      `;
+      window.FluxZenGame2048 = this;
+    }
+
+    stop() {
+      this.running = false;
+      if (this.handleKeyDown) window.removeEventListener('keydown', this.handleKeyDown);
+      if (this.container) this.container.innerHTML = '';
     }
   }
 
@@ -1565,16 +1773,7 @@
     ConnectFourGame, 
     PongGame, 
     RPSGame, 
-    MinesweeperGame 
-  };
-
-  window.FluxZenGames = { 
-    SnakeGame, 
-    MemoryMatchGame, 
-    TicTacToeGame, 
-    ConnectFourGame, 
-    PongGame, 
-    RPSGame, 
-    MinesweeperGame 
+    MinesweeperGame,
+    Game2048
   };
 })(window);

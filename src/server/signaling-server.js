@@ -1,39 +1,118 @@
 /**
- * FluxTransfer — Lightweight WebRTC Signaling Server
- * 
- * Responsibilities:
- * - WebSocket connection management & heartbeat (ping/pong)
- * - Room pairing via shareable 6-8 digit session codes
- * - Pure metadata signaling exchange (SDP offers, answers, ICE candidates)
- * - ZERO file data passing through this server
- * - Graceful peer disconnect & room cleanup
+ * FluxTransfer — Unified Server (Static Files + WebRTC Signaling)
+ *
+ * Serves static client files AND WebSocket signaling on ONE port.
+ * This is the correct setup for cross-network deployment:
+ *   - Static files: GET /  → serves src/client/
+ *   - Signaling:    WS /   → WebSocket upgrade
+ *
+ * Deploy on any cloud (Render, Railway, Fly.io, Heroku) and both
+ * the website AND the WebSocket signaling are publicly reachable.
+ *
+ * ZERO file data passes through this server.
  */
 
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = process.env.PORT || 8080;
+const STATIC_DIR = path.join(__dirname, '..', 'client');
 
-// HTTP Server for health checks & static ping
+// ─── MIME Types ───────────────────────────────────────────────────────────────
+const MIME = {
+  '.html': 'text/html',
+  '.css': 'text/css',
+  '.js': 'application/javascript',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.txt': 'text/plain',
+  '.xml': 'text/xml',
+};
+
+function serveStatic(req, res) {
+  // CORS headers for signaling health check
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  let reqPath = req.url.split('?')[0].split('#')[0];
+
+  // SPA-style routing: trailing-slash pages load their index.html
+  if (reqPath.endsWith('/') && reqPath !== '/') {
+    reqPath += 'index.html';
+  }
+  if (reqPath === '/') {
+    reqPath = '/index.html';
+  }
+
+  const filePath = path.join(STATIC_DIR, reqPath);
+
+  // Prevent path traversal
+  if (!filePath.startsWith(STATIC_DIR)) {
+    res.writeHead(403); res.end('Forbidden'); return;
+  }
+
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat.isFile()) {
+      // For unknown paths, serve index.html (client-side routing)
+      const fallback = path.join(STATIC_DIR, 'index.html');
+      fs.readFile(fallback, (e, data) => {
+        if (e) { res.writeHead(404); res.end('Not found'); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(data);
+      });
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME[ext] || 'application/octet-stream';
+    const maxAge = ext === '.html' ? 0 : 3600; // cache assets 1h, HTML no-cache
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Cache-Control': `public, max-age=${maxAge}`,
+      'X-Content-Type-Options': 'nosniff',
+    });
+
+    fs.createReadStream(filePath).pipe(res);
+  });
+}
+
+// ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-  res.end(JSON.stringify({ status: 'ok', service: 'FluxTransfer Signaling Server', activeRooms: rooms.size }));
+  // Health check endpoint for uptime monitors
+  if (req.url === '/health' || req.url === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      service: 'FluxTransfer Signaling Server',
+      activeRooms: rooms.size,
+      connectedClients: wss.clients.size
+    }));
+    return;
+  }
+
+  serveStatic(req, res);
 });
 
-// Create WebSocket Server
+// ─── Room Store ───────────────────────────────────────────────────────────────
+const rooms = new Map(); // Map<roomCode, Set<WebSocket>>
+
+// ─── WebSocket Server (upgrade on same HTTP server) ───────────────────────────
 const wss = new WebSocketServer({ server });
 
-// Room Store: Map<roomCode, Set<WebSocket>>
-const rooms = new Map();
-
-// Helper to broadcast JSON to a client
 function send(ws, data) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data));
   }
 }
 
-// Helper to broadcast to the OTHER peer in the room
 function relayToPeer(roomCode, senderWs, data) {
   const room = rooms.get(roomCode);
   if (!room) return;
@@ -44,7 +123,6 @@ function relayToPeer(roomCode, senderWs, data) {
   }
 }
 
-// Leave / Cleanup room
 function leaveRoom(ws) {
   if (!ws.roomCode) return;
 
@@ -53,14 +131,11 @@ function leaveRoom(ws) {
 
   if (room) {
     room.delete(ws);
-    // Notify remaining peer in room
     relayToPeer(roomCode, ws, { type: 'peer-left' });
 
     if (room.size === 0) {
       rooms.delete(roomCode);
-      console.log(`[Room ${roomCode}] Empty — cleaned up`);
-    } else {
-      console.log(`[Room ${roomCode}] Peer left. Remaining: ${room.size}`);
+      // No logging for empty room cleanup
     }
   }
 
@@ -68,16 +143,10 @@ function leaveRoom(ws) {
 }
 
 wss.on('connection', (ws, req) => {
-  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  console.log(`[Client Connected] IP: ${ip}`);
-
   ws.isAlive = true;
   ws.roomCode = null;
 
-  // Pong handler for heartbeat
-  ws.on('pong', () => {
-    ws.isAlive = true;
-  });
+  ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (rawMessage) => {
     try {
@@ -91,7 +160,6 @@ wss.on('connection', (ws, req) => {
             return;
           }
 
-          // If client is currently in another room, leave it
           if (ws.roomCode && ws.roomCode !== room) {
             leaveRoom(ws);
           }
@@ -103,13 +171,11 @@ wss.on('connection', (ws, req) => {
           const targetRoom = rooms.get(room);
 
           if (targetRoom.has(ws)) {
-            // Already in room
             send(ws, { type: 'joined', room, role: targetRoom.size === 1 ? 'initiator' : 'joiner' });
             return;
           }
 
           if (targetRoom.size >= 2) {
-            console.log(`[Room ${room}] Refused connection: Room full (Max 2 peers)`);
             send(ws, { type: 'room-full', room });
             return;
           }
@@ -118,9 +184,6 @@ wss.on('connection', (ws, req) => {
           ws.roomCode = room;
 
           const isInitiator = targetRoom.size === 1;
-          console.log(`[Room ${room}] Client joined as ${isInitiator ? 'initiator' : 'joiner'}. Total: ${targetRoom.size}`);
-
-          // Response to client joining
           send(ws, {
             type: 'joined',
             room,
@@ -128,7 +191,6 @@ wss.on('connection', (ws, req) => {
             peerPresent: targetRoom.size === 2
           });
 
-          // Notify existing peer that a new peer joined
           if (targetRoom.size === 2) {
             relayToPeer(room, ws, { type: 'peer-joined' });
           }
@@ -136,21 +198,13 @@ wss.on('connection', (ws, req) => {
         }
 
         case 'offer': {
-          if (!ws.roomCode) {
-            send(ws, { type: 'error', message: 'Not in a room' });
-            return;
-          }
-          console.log(`[Room ${ws.roomCode}] Relaying SDP Offer`);
+          if (!ws.roomCode) { send(ws, { type: 'error', message: 'Not in a room' }); return; }
           relayToPeer(ws.roomCode, ws, { type: 'offer', offer });
           break;
         }
 
         case 'answer': {
-          if (!ws.roomCode) {
-            send(ws, { type: 'error', message: 'Not in a room' });
-            return;
-          }
-          console.log(`[Room ${ws.roomCode}] Relaying SDP Answer`);
+          if (!ws.roomCode) { send(ws, { type: 'error', message: 'Not in a room' }); return; }
           relayToPeer(ws.roomCode, ws, { type: 'answer', answer });
           break;
         }
@@ -169,30 +223,20 @@ wss.on('connection', (ws, req) => {
 
         default:
           send(ws, { type: 'error', message: `Unknown message type: ${type}` });
-          break;
       }
     } catch (err) {
-      console.error('[Signaling Error] Failed to parse message:', err.message);
       send(ws, { type: 'error', message: 'Invalid JSON format' });
     }
   });
 
-  ws.on('close', () => {
-    console.log(`[Client Disconnected] Room: ${ws.roomCode || 'none'}`);
-    leaveRoom(ws);
-  });
-
-  ws.on('error', (err) => {
-    console.error('[Socket Error]', err.message);
-    leaveRoom(ws);
-  });
+  ws.on('close', () => { leaveRoom(ws); });
+  ws.on('error', () => { leaveRoom(ws); });
 });
 
-// Heartbeat interval to detect dead WebSocket connections
+// ─── Heartbeat — detect dead connections ─────────────────────────────────────
 const pingInterval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
-      console.log(`[Heartbeat] Terminating inactive connection (Room: ${ws.roomCode || 'none'})`);
       leaveRoom(ws);
       return ws.terminate();
     }
@@ -201,11 +245,11 @@ const pingInterval = setInterval(() => {
   });
 }, 30000);
 
-wss.on('close', () => {
-  clearInterval(pingInterval);
-});
+wss.on('close', () => clearInterval(pingInterval));
 
+// ─── Start ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
-  console.log(`🚀 FluxTransfer WebRTC Signaling Server listening on http://localhost:${PORT}`);
-  console.log(`📡 WebSocket endpoint ready at ws://localhost:${PORT}`);
+  console.log(`\n🚀 FluxTransfer running on http://localhost:${PORT}`);
+  console.log(`📡 WebSocket signaling at ws://localhost:${PORT}`);
+  console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
 });

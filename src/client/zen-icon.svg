@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Rounded Container Background -->
+  <rect x="5" y="5" width="90" height="90" rx="22" fill="url(#bgGrad)" stroke="#D4AF37" stroke-width="1.5" stroke-opacity="0.4"/>
+  
+  <!-- Outer Ring -->
+  <circle cx="50" cy="50" r="32" stroke="#10B981" stroke-width="1.5" stroke-opacity="0.5" stroke-dasharray="4 2"/>
+  <circle cx="50" cy="50" r="26" stroke="#D4AF37" stroke-width="1" stroke-opacity="0.3"/>
+  
+  <!-- Main 8-Point Compass Star -->
+  <!-- Vertical Points -->
+  <path d="M 50 15 L 56 44 L 50 50 L 44 44 Z" fill="url(#emeraldGrad)"/>
+  <path d="M 50 85 L 56 56 L 50 50 L 44 56 Z" fill="url(#emeraldGrad)"/>
+  <!-- Horizontal Points -->
+  <path d="M 15 50 L 44 44 L 50 50 L 44 56 Z" fill="url(#goldGrad)"/>
+  <path d="M 85 50 L 56 44 L 50 50 L 56 56 Z" fill="url(#goldGrad)"/>
+  
+  <!-- Diagonal Points -->
+  <path d="M 25 25 L 45 42 L 50 50 L 42 45 Z" fill="url(#emeraldGrad)"/>
+  <path d="M 75 75 L 55 58 L 50 50 L 58 55 Z" fill="url(#emeraldGrad)"/>
+  <path d="M 75 25 L 58 45 L 50 50 L 55 42 Z" fill="url(#goldGrad)"/>
+  <path d="M 25 75 L 42 55 L 50 50 L 45 58 Z" fill="url(#goldGrad)"/>
+
+  <!-- Center Diamond Sparkle -->
+  <polygon points="50,38 54,50 50,62 46,50" fill="#FEF08A"/>
+  <circle cx="50" cy="50" r="3" fill="#FFFFFF"/>
+
+  <defs>
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0F2E23"/>
+      <stop offset="100%" stop-color="#05140E"/>
+    </radialGradient>
+    <linearGradient id="emeraldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#34D399"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FDE047"/>
+      <stop offset="1" stop-color="#D97706"/>
+    </linearGradient>
+  </defs>
+</svg>

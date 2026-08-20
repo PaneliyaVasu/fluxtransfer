@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Flux Zen - Discover</title>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@500&amp;family=Space+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-tertiary-container": "#711419",
+                        "tertiary": "#ffb3af",
+                        "inverse-primary": "#006c49",
+                        "surface-container-high": "#222c28",
+                        "surface-tint": "#4edea3",
+                        "on-tertiary-fixed": "#410005",
+                        "inverse-surface": "#dae5df",
+                        "surface-container": "#18221e",
+                        "surface-variant": "#2d3733",
+                        "primary-fixed": "#6ffbbe",
+                        "on-secondary": "#003732",
+                        "on-tertiary": "#650911",
+                        "inverse-on-surface": "#29322f",
+                        "primary": "#4edea3",
+                        "surface-bright": "#323b37",
+                        "surface-container-highest": "#2d3733",
+                        "on-primary-container": "#00422b",
+                        "on-tertiary-fixed-variant": "#842225",
+                        "tertiary-fixed": "#ffdad7",
+                        "on-secondary-fixed": "#00201d",
+                        "tertiary-container": "#fc7c78",
+                        "on-surface-variant": "#bbcabf",
+                        "on-surface": "#dae5df",
+                        "surface": "#0c1512",
+                        "on-primary-fixed": "#002113",
+                        "error": "#ffb4ab",
+                        "tertiary-fixed-dim": "#ffb3af",
+                        "secondary-fixed-dim": "#97d2c9",
+                        "glass-border": "rgba(255, 255, 255, 0.08)",
+                        "surface-dim": "#0c1512",
+                        "on-secondary-fixed-variant": "#0f4f49",
+                        "primary-container": "#10b981",
+                        "on-primary": "#003824",
+                        "on-background": "#dae5df",
+                        "error-container": "#93000a",
+                        "surface-container-low": "#141d1a",
+                        "background": "#0c1512",
+                        "secondary": "#97d2c9",
+                        "accent-gold": "#E8A33D",
+                        "text-warm": "#EDEAE2",
+                        "on-error": "#690005",
+                        "outline-variant": "#3c4a42",
+                        "outline": "#86948a",
+                        "secondary-container": "#13524b",
+                        "on-secondary-container": "#8ac3bb",
+                        "on-primary-fixed-variant": "#005236",
+                        "primary-fixed-dim": "#4edea3",
+                        "secondary-fixed": "#b3eee5",
+                        "on-error-container": "#ffdad6",
+                        "surface-card": "#16211C",
+                        "surface-container-lowest": "#07100d"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "stack-sm": "8px",
+                        "margin-mobile": "16px",
+                        "base": "4px",
+                        "stack-md": "16px",
+                        "margin-desktop": "40px",
+                        "stack-lg": "32px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter", "sans-serif"],
+                        "display-lg": ["Space Grotesk", "sans-serif"],
+                        "display-lg-mobile": ["Space Grotesk", "sans-serif"],
+                        "label-caps": ["Inter", "sans-serif"],
+                        "label-mono": ["JetBrains Mono", "monospace"],
+                        "headline-md": ["Space Grotesk", "sans-serif"],
+                        "body-lg": ["Inter", "sans-serif"]
+                    },
+                    "fontSize": {
+                        "body-md": ["16px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "display-lg": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "display-lg-mobile": ["36px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "label-caps": ["12px", { "lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "600" }],
+                        "label-mono": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "headline-md": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(22, 33, 28, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-effect {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 150%;
+            height: 150%;
+            background: radial-gradient(circle, rgba(78, 222, 163, 0.08) 0%, rgba(7, 16, 13, 0) 70%);
+            pointer-events: none;
+            z-index: -1;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface min-h-screen flex flex-col font-body-md relative overflow-x-hidden selection:bg-primary/30 selection:text-primary">
+<!-- Background Glow -->
+<div class="fixed inset-0 pointer-events-none z-[-1] overflow-hidden">
+<div class="glow-effect"></div>
+</div>
+<!-- Side NavBar (Desktop Shell) -->
+<nav class="hidden md:flex flex-col h-full w-80 fixed right-0 top-0 bg-surface-container-high/90 backdrop-blur-2xl border-l border-glass-border shadow-2xl shadow-primary/5 p-stack-md translate-x-0 transition-transform duration-300 ease-in-out z-50">
+<div class="flex items-center gap-stack-sm mb-stack-lg">
+<div class="w-10 h-10 rounded-lg bg-surface flex items-center justify-center border border-glass-border">
+<span class="material-symbols-outlined text-accent-gold" data-icon="waves" style="font-variation-settings: 'FILL' 1;">waves</span>
+</div>
+<div>
+<h2 class="font-headline-md text-headline-md text-accent-gold m-0">Flux Zen</h2>
+<p class="font-label-mono text-label-mono text-on-surface-variant m-0">Ambient Relaxation</p>
+</div>
+</div>
+<div class="flex-1 flex flex-col gap-base">
+<a class="flex items-center gap-stack-sm p-3 rounded-xl text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="videogame_asset">videogame_asset</span>
+<span class="font-label-mono text-label-mono">Snake</span>
+</a>
+<a class="flex items-center gap-stack-sm p-3 rounded-xl text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="grid_view">grid_view</span>
+<span class="font-label-mono text-label-mono">2048</span>
+</a>
+<a class="flex items-center gap-stack-sm p-3 rounded-xl bg-primary-container text-on-primary-container" href="#">
+<span class="material-symbols-outlined" data-icon="lightbulb" style="font-variation-settings: 'FILL' 1;">lightbulb</span>
+<span class="font-label-mono text-label-mono">Discovery</span>
+</a>
+<a class="flex items-center gap-stack-sm p-3 rounded-xl text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="waves">waves</span>
+<span class="font-label-mono text-label-mono">Ambience</span>
+</a>
+</div>
+<div class="mt-auto flex flex-col gap-stack-sm">
+<a class="flex items-center gap-stack-sm p-3 rounded-xl text-on-surface-variant hover:bg-white/5 transition-all" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-label-mono text-label-mono">Settings</span>
+</a>
+<button class="w-full py-3 px-4 bg-surface-variant text-on-surface rounded-lg font-label-mono text-label-mono hover:bg-surface-bright transition-colors border border-glass-border flex items-center justify-center gap-2">
+                Open Fullscreen
+                <span class="material-symbols-outlined text-[16px]" data-icon="open_in_full">open_in_full</span>
+</button>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col w-full md:pr-80 max-w-7xl mx-auto p-margin-mobile md:p-margin-desktop relative z-10">
+<!-- Header (Mobile/Content Area) -->
+<header class="flex items-center justify-between mb-stack-lg">
+<button class="w-10 h-10 rounded-full flex items-center justify-center bg-surface-container hover:bg-surface-variant transition-colors border border-glass-border">
+<span class="material-symbols-outlined text-on-surface" data-icon="arrow_back">arrow_back</span>
+</button>
+<h1 class="font-headline-md text-headline-md text-accent-gold m-0 md:hidden">Flux Zen</h1>
+<!-- Mobile Tab Nav (Simplified) -->
+<div class="flex gap-2 bg-surface-container rounded-full p-1 border border-glass-border md:hidden">
+<button class="px-4 py-1.5 rounded-full text-on-surface-variant font-label-caps text-label-caps hover:bg-surface-variant transition-colors">PLAY</button>
+<button class="px-4 py-1.5 rounded-full bg-primary-container text-on-primary-container font-label-caps text-label-caps">DISCOVER</button>
+</div>
+<!-- Placeholder to balance flex -->
+<div class="w-10 h-10 md:hidden"></div>
+</header>
+<div class="max-w-[672px] mx-auto w-full flex flex-col flex-1">
+<!-- Transfer Status Card (Compact) -->
+<div class="glass-panel rounded-xl p-4 mb-stack-lg flex items-center gap-4">
+<div class="relative w-12 h-12 flex-shrink-0">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 36 36">
+<circle class="stroke-surface-variant" cx="18" cy="18" fill="none" r="16" stroke-width="3"></circle>
+<circle class="stroke-primary" cx="18" cy="18" fill="none" r="16" stroke-dasharray="100.53" stroke-dashoffset="28.15" stroke-linecap="round" stroke-width="3"></circle>
+</svg>
+<div class="absolute inset-0 flex items-center justify-center">
+<span class="font-label-mono text-label-caps text-primary">72%</span>
+</div>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-end mb-1">
+<h3 class="font-label-mono text-label-mono text-on-surface m-0">Project_Nova_Assets.zip</h3>
+<span class="font-label-caps text-label-caps text-on-surface-variant">2.4 GB / 3.4 GB</span>
+</div>
+<div class="w-full h-1.5 bg-surface-variant rounded-full overflow-hidden">
+<div class="h-full bg-primary w-[72%] rounded-full shadow-[0_0_10px_rgba(78,222,163,0.5)]"></div>
+</div>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-2 m-0 uppercase">Est. 45s remaining • End-to-End Encrypted</p>
+</div>
+</div>
+<!-- Main Discovery Content -->
+<div class="flex-1 flex flex-col justify-center py-stack-lg">
+<!-- Categories -->
+<div class="flex flex-wrap gap-2 mb-stack-lg justify-center">
+<span class="px-3 py-1 rounded-full border border-primary/30 bg-primary/10 text-primary font-label-caps text-label-caps uppercase tracking-wider backdrop-blur-sm">Space</span>
+<span class="px-3 py-1 rounded-full border border-glass-border bg-surface-container text-on-surface-variant font-label-caps text-label-caps uppercase tracking-wider hover:bg-surface-variant cursor-pointer transition-colors">Science</span>
+<span class="px-3 py-1 rounded-full border border-glass-border bg-surface-container text-on-surface-variant font-label-caps text-label-caps uppercase tracking-wider hover:bg-surface-variant cursor-pointer transition-colors">Tech</span>
+<span class="px-3 py-1 rounded-full border border-glass-border bg-surface-container text-on-surface-variant font-label-caps text-label-caps uppercase tracking-wider hover:bg-surface-variant cursor-pointer transition-colors">Facts</span>
+</div>
+<!-- Fact Card -->
+<div class="glass-panel rounded-2xl p-stack-lg md:p-margin-desktop text-center relative overflow-hidden group">
+<!-- Subtle interior glow -->
+<div class="absolute top-0 left-1/2 -translate-x-1/2 w-[80%] h-32 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-700"></div>
+<span class="material-symbols-outlined text-4xl text-primary/50 mb-4 block" data-icon="public">public</span>
+<h2 class="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg text-on-surface mb-stack-md leading-tight">
+                        A day on Venus is longer than a year on Venus.
+                    </h2>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-lg mx-auto m-0">
+                        Venus has an extremely slow rotation on its axis. It takes 243 Earth days to complete one rotation, but only 225 Earth days to orbit the sun.
+                    </p>
+</div>
+<!-- Actions -->
+<div class="flex flex-col sm:flex-row items-center justify-center gap-stack-md mt-stack-lg">
+<button class="w-full sm:w-auto px-6 py-3 rounded-full bg-surface-container border border-glass-border text-on-surface font-label-mono text-label-mono hover:bg-surface-variant transition-colors flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]" data-icon="bookmark">bookmark</span>
+                        Save for Later
+                    </button>
+<button class="w-full sm:w-auto px-8 py-3 rounded-full bg-primary-container text-on-primary-container font-label-caps text-label-caps uppercase tracking-wider hover:brightness-110 active:scale-95 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2">
+                        Next Fact
+                        <span class="material-symbols-outlined text-[18px]" data-icon="arrow_forward">arrow_forward</span>
+</button>
+<button aria-label="Surprise Me" class="w-full sm:w-auto p-3 rounded-full bg-surface-container border border-glass-border text-accent-gold hover:bg-surface-variant transition-colors flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="shuffle">shuffle</span>
+</button>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation (Mobile Shell) -->
+<nav class="md:hidden flex justify-between items-center w-full px-margin-mobile py-4 bg-surface-container-high/90 backdrop-blur-xl border-t border-glass-border fixed bottom-0 z-50">
+<a class="flex flex-col items-center gap-1 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-2xl" data-icon="home">home</span>
+<span class="font-label-caps text-label-caps text-[10px]">Home</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-2xl" data-icon="swap_horiz">swap_horiz</span>
+<span class="font-label-caps text-label-caps text-[10px]">Transfer</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-primary font-bold" href="#">
+<div class="relative">
+<span class="material-symbols-outlined text-2xl" data-icon="lightbulb" style="font-variation-settings: 'FILL' 1;">lightbulb</span>
+<div class="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-accent-gold"></div>
+</div>
+<span class="font-label-caps text-label-caps text-[10px]">Zen</span>
+</a>
+<a class="flex flex-col items-center gap-1 text-on-surface-variant hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-2xl" data-icon="person">person</span>
+<span class="font-label-caps text-label-caps text-[10px]">Profile</span>
+</a>
+</nav>
+<div class="h-[80px] md:hidden"></div> <!-- Spacer for mobile nav -->
+</body></html>
