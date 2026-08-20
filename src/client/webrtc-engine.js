@@ -13,9 +13,9 @@
 (function (global) {
   'use strict';
 
-  const DEFAULT_CHUNK_SIZE = 256 * 1024; // 256 KB (Maximum zero-copy throughput for WebRTC DataChannels)
-  const BUFFER_HIGH_WATERMARK = 8 * 1024 * 1024; // 8 MB high watermark
-  const BUFFER_LOW_WATERMARK = 2 * 1024 * 1024;  // 2 MB low watermark
+  const DEFAULT_CHUNK_SIZE = 128 * 1024; // 128 KB (Zero-copy raw ArrayBuffer chunk size)
+  const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB high watermark
+  const BUFFER_LOW_WATERMARK = 1 * 1024 * 1024;  // 1 MB low watermark
   const ICE_RESTART_DELAY_MS = 2000;  // wait before restarting ICE
 
   // ─── ICE Server Configuration ─────────────────────────────────────────────
@@ -278,12 +278,11 @@
         }
       };
 
-      // Receiver listens for incoming DataChannels (Multi-channel setup)
+      // Receiver listens for incoming DataChannel
       this.pc.ondatachannel = (event) => {
-        console.log('[WebRTC Engine] Received remote DataChannel:', event.channel.label);
-        this.dataChannels.push(event.channel);
-        this.dataChannel = this.dataChannels[0];
-        this._setupSingleDataChannelEvents(event.channel, this.dataChannels.length - 1);
+        console.log('[WebRTC Engine] Received remote DataChannel');
+        this.dataChannel = event.channel;
+        this._setupDataChannelEvents();
       };
     }
 
@@ -307,14 +306,16 @@
           }
         });
         if (usingRelay) {
-          this.onStatusChange('Connected via TURN relay ⚡ (cross-network mode)', 'success');
-          console.log('[WebRTC Engine] Connection type: RELAYED (TURN)');
+          this.onStatusChange('WebRTC TURN Relay Connected ⚡ (Encrypted Cloud Relay Mode)', 'success');
+          console.log('%c[WebRTC Engine] ⚡ Connection Mode: WebRTC TURN RELAY (Relayed across internet)', 'color: #f59e0b; font-weight: bold; font-size: 12px;');
         } else {
-          this.onStatusChange('P2P Direct Connection Established ⚡', 'success');
-          console.log(`[WebRTC Engine] Connection type: DIRECT (${localType})`);
+          const detail = localType === 'host' ? 'LAN / Local Network' : 'Direct Internet (STUN)';
+          this.onStatusChange(`WebRTC Direct P2P Connected ⚡ (${detail})`, 'success');
+          console.log(`%c[WebRTC Engine] 🚀 Connection Mode: WebRTC DIRECT P2P (${detail})`, 'color: #10b981; font-weight: bold; font-size: 12px;');
         }
       } catch (_) {
-        this.onStatusChange('P2P Connection Established ⚡', 'success');
+        this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+        console.log('[WebRTC Engine] Connection Mode: WebRTC DIRECT P2P');
       }
     }
 
@@ -398,17 +399,10 @@
 
       this._createPeerConnection();
       this._iceRestartAttempted = false;
-      this._hasFiredOpen = false;
 
-      // Only the initiator creates 4 parallel DataChannels
-      this.dataChannels = [];
-      const NUM_CHANNELS = 4;
-      for (let i = 0; i < NUM_CHANNELS; i++) {
-        const dc = this.pc.createDataChannel(`flux-channel-${i}`, { ordered: true });
-        this.dataChannels.push(dc);
-        this._setupSingleDataChannelEvents(dc, i);
-      }
-      this.dataChannel = this.dataChannels[0];
+      // Only the initiator creates the DataChannel
+      this.dataChannel = this.pc.createDataChannel('flux-file-channel', { ordered: true });
+      this._setupDataChannelEvents();
 
       try {
         const offer = await this.pc.createOffer();
@@ -489,35 +483,32 @@
     }
 
     /**
-     * Configure single DataChannel events and backpressure thresholds
+     * Configure DataChannel events and backpressure thresholds
      */
-    _setupSingleDataChannelEvents(dc, index) {
-      if (!dc) return;
+    _setupDataChannelEvents() {
+      if (!this.dataChannel) return;
 
-      dc.binaryType = 'arraybuffer';
-      dc.bufferedAmountLowThreshold = BUFFER_LOW_WATERMARK;
+      this.dataChannel.binaryType = 'arraybuffer';
+      this.dataChannel.bufferedAmountLowThreshold = BUFFER_LOW_WATERMARK;
 
-      dc.onopen = () => {
-        console.log(`[WebRTC Engine] DataChannel ${index} OPEN (${dc.label})`);
-        if (!this._hasFiredOpen) {
-          this._hasFiredOpen = true;
-          this.onStatusChange('P2P Parallel DataChannels open (4 Channels Ready)! ⚡', 'success');
-          this.onDataChannelOpen();
-        }
+      this.dataChannel.onopen = () => {
+        console.log('[WebRTC Engine] DataChannel OPEN');
+        this.onStatusChange('P2P DataChannel open. Ready for file transfer! ⚡', 'success');
+        this.onDataChannelOpen();
       };
 
-      dc.onclose = () => {
-        console.log(`[WebRTC Engine] DataChannel ${index} CLOSED`);
+      this.dataChannel.onclose = () => {
+        console.log('[WebRTC Engine] DataChannel CLOSED');
         if (this.isTransferring) {
           this._handlePeerDisconnect('DataChannel closed unexpectedly during file transfer.');
         }
       };
 
-      dc.onerror = (err) => {
-        console.error(`[WebRTC Engine] DataChannel ${index} Error:`, err);
+      this.dataChannel.onerror = (err) => {
+        console.error('[WebRTC Engine] DataChannel Error:', err);
       };
 
-      dc.onmessage = (event) => {
+      this.dataChannel.onmessage = (event) => {
         this._handleDataChannelMessage(event.data);
       };
     }
@@ -562,25 +553,16 @@
           console.error('[WebRTC Engine] Failed parsing text frame', e);
         }
       } else if (data instanceof ArrayBuffer) {
-        // Binary Chunk Frame (4-byte index header + binary chunk)
+        // Binary Chunk Frame (Zero-copy raw ArrayBuffer)
         if (!this.incomingMeta) {
           console.warn('[WebRTC Engine] Received chunk before metadata header');
           return;
         }
 
-        if (data.byteLength < 4) return;
-        const view = new DataView(data);
-        const chunkIndex = view.getUint32(0, false);
-        const chunkPayload = data.slice(4);
-
-        if (!this.receivedChunks[chunkIndex]) {
-          this.receivedChunks[chunkIndex] = chunkPayload;
-          this.receivedBytes += chunkPayload.byteLength;
-          this.receivedChunkCount = (this.receivedChunkCount || 0) + 1;
-        }
+        this.receivedChunks.push(data);
+        this.receivedBytes += data.byteLength;
 
         const totalBytes = this.incomingMeta.size;
-        const totalChunks = this.incomingMeta.totalChunks;
         const now = Date.now();
         const timeDiff = (now - this.lastProgressTime) / 1000;
 
@@ -593,7 +575,7 @@
         }
 
         // Throttle UI updates to max once per 100ms (or on final 100% completion)
-        const isComplete = this.receivedChunkCount >= totalChunks || this.receivedBytes >= totalBytes;
+        const isComplete = this.receivedBytes >= totalBytes;
         if (isComplete || (now - (this._lastRecvUiUpdate || 0)) > 100) {
           this._lastRecvUiUpdate = now;
           const percent = Math.min(100, (this.receivedBytes / totalBytes) * 100);
@@ -607,7 +589,7 @@
         }
 
         // Reassembly on complete (Guard: process completion exactly once per file)
-        if (this.incomingMeta && (this.receivedChunkCount >= totalChunks || this.receivedBytes >= totalBytes)) {
+        if (this.incomingMeta && this.receivedBytes >= totalBytes) {
           const meta = this.incomingMeta;
           this.incomingMeta = null; // Clear immediately to prevent re-entrancy on extra chunks
           this.isTransferring = false;
@@ -615,7 +597,6 @@
           const fileBlob = new Blob(this.receivedChunks, { type: meta.mimeType || 'application/octet-stream' });
           this.receivedChunks = [];
           this.receivedBytes = 0;
-          this.receivedChunkCount = 0;
 
           this.onStatusChange(`File "${meta.name}" received successfully!`, 'success');
           this.onFileComplete(fileBlob, meta);
@@ -664,94 +645,87 @@
       this.onStatusChange(`Starting transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
       this._sendControlMessage(metadata);
 
-      // 2. Read and Stream Chunks with Backpressure across Parallel Channels
-      let currentChunkIndex = 0;
-      let bytesSentTotal = 0;
+      // 2. Read and Stream Chunks Zero-Copy with Event-Driven Backpressure
+      let offset = 0;
       let chunkCount = 0;
       this.lastProgressTime = Date.now();
       this.lastProgressBytes = 0;
       this.currentSpeedBps = 0;
       this._lastSendUiUpdate = 0;
 
-      const openChannels = this.dataChannels.filter(dc => dc && dc.readyState === 'open');
-      const channelsToUse = openChannels.length > 0 ? openChannels : [this.dataChannel];
+      while (offset < file.size && this.isTransferring) {
+        if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
+          await this._waitForBufferLow();
+        }
 
-      const workers = channelsToUse.map(dc => (async () => {
-        while (currentChunkIndex < totalChunks && this.isTransferring) {
-          const index = currentChunkIndex++;
-          if (index >= totalChunks) break;
+        const slice = file.slice(offset, offset + chunkSize);
+        const chunkBuffer = await slice.arrayBuffer();
 
-          if (dc.bufferedAmount > BUFFER_HIGH_WATERMARK) {
-            await this._waitForChannelBufferLow(dc);
-          }
+        try {
+          this.dataChannel.send(chunkBuffer);
+        } catch (err) {
+          this.onError(`Failed to send chunk: ${err.message}`, 'ERR_CHUNK_SEND');
+          this.isTransferring = false;
+          return;
+        }
 
-          const offset = index * chunkSize;
-          const slice = file.slice(offset, offset + chunkSize);
-          const rawBuffer = await slice.arrayBuffer();
+        offset += chunkBuffer.byteLength;
+        chunkCount++;
 
-          // 4-byte chunk index header + payload
-          const frame = new Uint8Array(4 + rawBuffer.byteLength);
-          new DataView(frame.buffer).setUint32(0, index, false);
-          frame.set(new Uint8Array(rawBuffer), 4);
+        const now = Date.now();
+        const timeDiff = (now - this.lastProgressTime) / 1000;
 
-          try {
-            dc.send(frame.buffer);
-          } catch (err) {
-            console.error('[WebRTC Engine] Send error on channel:', err);
-            this.onError(`Failed to send chunk: ${err.message}`, 'ERR_CHUNK_SEND');
-            this.isTransferring = false;
-            return;
-          }
+        if (timeDiff >= 0.5) {
+          const bytesDiff = offset - this.lastProgressBytes;
+          this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
+          this.lastProgressTime = now;
+          this.lastProgressBytes = offset;
+        }
 
-          bytesSentTotal += rawBuffer.byteLength;
-          chunkCount++;
+        const isComplete = offset >= file.size;
+        if (isComplete || (now - this._lastSendUiUpdate) > 100) {
+          this._lastSendUiUpdate = now;
+          const percent = Math.min(100, (offset / file.size) * 100);
+          this.onProgress({
+            percent: percent.toFixed(1),
+            transferredBytes: offset,
+            totalBytes: file.size,
+            speedBps: this.currentSpeedBps,
+            role: 'sender'
+          });
+        }
 
-          const now = Date.now();
-          const timeDiff = (now - this.lastProgressTime) / 1000;
-
-          if (timeDiff >= 0.5) {
-            const bytesDiff = bytesSentTotal - this.lastProgressBytes;
-            this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
-            this.lastProgressTime = now;
-            this.lastProgressBytes = bytesSentTotal;
-          }
-
-          const isComplete = bytesSentTotal >= file.size;
-          if (isComplete || (now - this._lastSendUiUpdate) > 100) {
-            this._lastSendUiUpdate = now;
-            const percent = Math.min(100, (bytesSentTotal / file.size) * 100);
-            this.onProgress({
-              percent: percent.toFixed(1),
-              transferredBytes: bytesSentTotal,
-              totalBytes: file.size,
-              speedBps: this.currentSpeedBps,
-              role: 'sender'
-            });
-          }
-
-          if (chunkCount % 40 === 0) {
+        if (chunkCount % 100 === 0) {
+          if (typeof requestAnimationFrame !== 'undefined') {
+            await new Promise(r => requestAnimationFrame(r));
+          } else {
             await new Promise(r => setTimeout(r, 0));
           }
         }
-      })());
-
-      await Promise.all(workers);
+      }
     }
 
     /**
      * Wait for bufferedAmountLow event when backpressure high watermark hit.
-     * Event-driven Promise resolves instantly when buffer drains below low watermark (no polling delay).
+     * Uses event-driven Promise with a 20ms safety fallback timer to guarantee no stalls.
      */
-    _waitForChannelBufferLow(dc) {
-      if (!dc || dc.readyState !== 'open' || dc.bufferedAmount <= BUFFER_LOW_WATERMARK) {
+    _waitForBufferLow() {
+      if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
         return Promise.resolve();
       }
       return new Promise((resolve) => {
-        const handler = () => {
-          if (dc) dc.onbufferedamountlow = null;
+        let fallbackTimer = null;
+        const done = () => {
+          if (fallbackTimer) clearTimeout(fallbackTimer);
+          if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
           resolve();
         };
-        dc.onbufferedamountlow = handler;
+        this.dataChannel.onbufferedamountlow = done;
+        fallbackTimer = setTimeout(() => {
+          if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
+            done();
+          }
+        }, 20);
       });
     }
 
@@ -802,11 +776,10 @@
     disconnect() {
       this.isTransferring = false;
 
-      if (this.dataChannels && this.dataChannels.length > 0) {
-        this.dataChannels.forEach(dc => { try { dc.close(); } catch (e) {} });
-        this.dataChannels = [];
+      if (this.dataChannel) {
+        try { this.dataChannel.close(); } catch (e) {}
+        this.dataChannel = null;
       }
-      this.dataChannel = null;
 
       if (this.pc) {
         try { this.pc.close(); } catch (e) {}
@@ -824,7 +797,6 @@
       this.roomCode = null;
       this.role = null;
       this.pendingIceCandidates = [];
-      this._hasFiredOpen = false;
     }
   }
 
