@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Install FluxTransfer on iPhone</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&amp;family=Inter:wght@400;600&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "accent-gold": "#E8A33D",
+                      "on-secondary-container": "#8ac3bb",
+                      "inverse-surface": "#dae5df",
+                      "on-secondary": "#003732",
+                      "on-tertiary-fixed": "#410005",
+                      "on-tertiary-container": "#711419",
+                      "surface": "#0c1512",
+                      "surface-container-low": "#141d1a",
+                      "on-primary-fixed": "#002113",
+                      "on-secondary-fixed-variant": "#0f4f49",
+                      "primary": "#4edea3",
+                      "primary-container": "#10b981",
+                      "secondary-container": "#13524b",
+                      "surface-container": "#18221e",
+                      "tertiary-fixed-dim": "#ffb3af",
+                      "background": "#0c1512",
+                      "surface-bright": "#323b37",
+                      "inverse-primary": "#006c49",
+                      "surface-tint": "#4edea3",
+                      "on-tertiary-fixed-variant": "#842225",
+                      "outline": "#86948a",
+                      "on-surface-variant": "#bbcabf",
+                      "error": "#ffb4ab",
+                      "on-tertiary": "#650911",
+                      "tertiary-container": "#fc7c78",
+                      "surface-container-high": "#222c28",
+                      "primary-fixed-dim": "#4edea3",
+                      "on-error": "#690005",
+                      "on-secondary-fixed": "#00201d",
+                      "secondary": "#97d2c9",
+                      "error-container": "#93000a",
+                      "inverse-on-surface": "#29322f",
+                      "on-error-container": "#ffdad6",
+                      "glass-border": "rgba(255, 255, 255, 0.08)",
+                      "surface-card": "#16211C",
+                      "on-primary-fixed-variant": "#005236",
+                      "on-primary-container": "#00422b",
+                      "secondary-fixed-dim": "#97d2c9",
+                      "tertiary-fixed": "#ffdad7",
+                      "outline-variant": "#3c4a42",
+                      "tertiary": "#ffb3af",
+                      "primary-fixed": "#6ffbbe",
+                      "surface-container-lowest": "#07100d",
+                      "surface-variant": "#2d3733",
+                      "on-primary": "#003824",
+                      "on-background": "#dae5df",
+                      "text-warm": "#EDEAE2",
+                      "surface-dim": "#0c1512",
+                      "secondary-fixed": "#b3eee5",
+                      "surface-container-highest": "#2d3733",
+                      "on-surface": "#dae5df"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "stack-sm": "8px",
+                      "stack-lg": "32px",
+                      "margin-mobile": "16px",
+                      "stack-md": "16px",
+                      "base": "4px",
+                      "gutter": "24px",
+                      "margin-desktop": "40px"
+              },
+              "fontFamily": {
+                      "body-md": [
+                              "Inter"
+                      ],
+                      "headline-md": [
+                              "Space Grotesk"
+                      ],
+                      "display-lg-mobile": [
+                              "Space Grotesk"
+                      ],
+                      "label-mono": [
+                              "JetBrains Mono"
+                      ],
+                      "display-lg": [
+                              "Space Grotesk"
+                      ],
+                      "body-lg": [
+                              "Inter"
+                      ],
+                      "label-caps": [
+                              "Inter"
+                      ]
+              },
+              "fontSize": {
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "display-lg-mobile": [
+                              "36px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "label-mono": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "label-caps": [
+                              "12px",
+                              {
+                                      "lineHeight": "1",
+                                      "letterSpacing": "0.1em",
+                                      "fontWeight": "600"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: linear-gradient(145deg, rgba(22, 33, 28, 0.6) 0%, rgba(20, 29, 26, 0.4) 100%);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .gradient-card {
+            background: linear-gradient(180deg, #18221e 0%, #141d1a 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-effect {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, rgba(78, 222, 163, 0.12) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: -1;
+        }
+        /* Mobile specific hide scrollbar */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md text-body-md antialiased min-h-screen flex flex-col items-center">
+<!-- Top App Bar -->
+<header class="bg-surface/80 dark:bg-surface/80 backdrop-blur-sm border-b border-glass-border flex justify-between items-center px-margin-mobile h-14 w-full z-50 pt-safe docked full-width top-0 sticky max-w-[672px]">
+<button class="text-primary dark:text-primary-fixed hover:brightness-110 transition-all active:scale-95 duration-200 flex items-center justify-center p-2 rounded-full">
+<span class="material-symbols-outlined" data-icon="bolt">bolt</span>
+</button>
+<div class="font-headline-md text-headline-md font-display-lg-mobile text-display-lg-mobile text-primary dark:text-primary tracking-tight">FluxTransfer</div>
+<button class="text-on-surface-variant hover:brightness-110 transition-all active:scale-95 duration-200 flex items-center justify-center p-2 rounded-full">
+<span class="material-symbols-outlined" data-icon="menu">menu</span>
+</button>
+</header>
+<main class="w-full max-w-[672px] flex-1 flex flex-col relative pb-32">
+<div class="glow-effect top-0 left-0"></div>
+<section class="px-margin-mobile py-stack-lg flex flex-col items-center text-center mt-stack-md z-10">
+<h1 class="font-display-lg-mobile text-display-lg-mobile text-on-surface mb-stack-sm tracking-tight">Install FluxTransfer on iPhone</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-md mx-auto">Get the full native experience by adding FluxTransfer to your home screen.</p>
+</section>
+<!-- Vertical Guide -->
+<section class="px-margin-mobile flex flex-col gap-stack-md z-10 relative">
+<!-- Step 1 -->
+<div class="glass-panel rounded-xl p-stack-md flex gap-stack-md items-start relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+<div class="flex-shrink-0 w-10 h-10 rounded-full bg-surface-container flex items-center justify-center border border-glass-border shadow-sm text-primary font-label-mono text-label-mono font-bold z-10">1</div>
+<div class="flex-1 z-10">
+<h3 class="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Open in Safari</h3>
+<p class="text-on-surface-variant mb-stack-md">Ensure you are viewing this page in Safari, not an in-app browser.</p>
+<div class="w-full aspect-video bg-surface-container-low rounded-lg border border-glass-border overflow-hidden relative shadow-inner">
+<img class="w-full h-full object-cover opacity-80 mix-blend-luminosity" data-alt="A close-up, high-quality rendering of an iPhone screen displaying the Safari browser interface. The browser shows a futuristic, dark-themed website with glowing green accents, characteristic of a secure file transfer service. The ambient lighting is moody and technical, emphasizing the sleek glass screen of the device against a deep obsidian background. Technical minimalist aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8N4rFPHaSv19OTqN2zR11_vKSKVBURsALHatgKsChZZEoYwG5zCz2NEdKDKQclXKeTiI-fcbm-uDpe0RJl_hbKBQQDJC5vSCuHkLFAh9nbN_2L-Gcreq7nyl9AQAnmh4YZUPYMUcEhMSGfeRFsZ3i3dQcqFhYU8fA6NiIyXwNLHynnVbkaNMQNT_Kyl57u3pn5R6KeRGdHT23tsCU95YEnvwD2z4jPU8bOkXsSdAWk4B2iWD5blca"/>
+</div>
+</div>
+</div>
+<!-- Step 2 -->
+<div class="glass-panel rounded-xl p-stack-md flex gap-stack-md items-start relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+<div class="flex-shrink-0 w-10 h-10 rounded-full bg-surface-container flex items-center justify-center border border-glass-border shadow-sm text-primary font-label-mono text-label-mono font-bold z-10">2</div>
+<div class="flex-1 z-10">
+<h3 class="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Tap Share</h3>
+<p class="text-on-surface-variant mb-stack-md">Find the share icon at the bottom center of your screen.</p>
+<div class="w-full aspect-video bg-surface-container-low rounded-lg border border-glass-border overflow-hidden relative shadow-inner flex items-center justify-center bg-gradient-to-b from-surface-container to-surface">
+<span class="material-symbols-outlined text-4xl text-primary animate-pulse" data-icon="ios_share">ios_share</span>
+</div>
+</div>
+</div>
+<!-- Step 3 -->
+<div class="glass-panel rounded-xl p-stack-md flex gap-stack-md items-start relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+<div class="flex-shrink-0 w-10 h-10 rounded-full bg-surface-container flex items-center justify-center border border-glass-border shadow-sm text-primary font-label-mono text-label-mono font-bold z-10">3</div>
+<div class="flex-1 z-10">
+<h3 class="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Add to Home Screen</h3>
+<p class="text-on-surface-variant mb-stack-md">Scroll down the share menu and select 'Add to Home Screen'.</p>
+<div class="w-full h-32 bg-surface-container-low rounded-lg border border-glass-border overflow-hidden relative shadow-inner p-3 flex flex-col justify-end">
+<div class="bg-surface-container-high rounded-md p-3 flex items-center justify-between border border-glass-border">
+<span class="text-on-surface font-medium">Add to Home Screen</span>
+<div class="w-6 h-6 rounded bg-surface border border-glass-border flex items-center justify-center">
+<span class="material-symbols-outlined text-sm text-on-surface-variant" data-icon="add">add</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Step 4 -->
+<div class="glass-panel rounded-xl p-stack-md flex gap-stack-md items-start relative overflow-hidden group">
+<div class="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+<div class="flex-shrink-0 w-10 h-10 rounded-full bg-surface-container flex items-center justify-center border border-glass-border shadow-sm text-primary font-label-mono text-label-mono font-bold z-10">4</div>
+<div class="flex-1 z-10">
+<h3 class="font-headline-md text-body-lg font-semibold text-on-surface mb-1">Tap Add</h3>
+<p class="text-on-surface-variant mb-stack-md">Confirm by tapping 'Add' in the top right corner.</p>
+<div class="w-full aspect-video bg-surface-container-low rounded-lg border border-glass-border overflow-hidden relative shadow-inner">
+<img class="w-full h-full object-cover opacity-80 mix-blend-luminosity" data-alt="A high-fidelity mockup of the iOS 'Add to Home Screen' confirmation dialog. The dialog features the FluxTransfer app icon prominently. The 'Add' button in the top right corner is highlighted or emphasized in the design. The overall scene reflects a dark mode, glassmorphic aesthetic consistent with a premium, secure application environment. Technical minimalist aesthetic." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDjKlf8ipxkvnpAlUDPW_f1ajO1XukAfTn6jWvmaHSEKkEk3NN0l32A-WiMXiycRySOLsmcXCkBL4sQVu1W1bWJr4ynoMIcU5gQ9NtI6UQTeU5dxKIoUjYAf4MkMzKCjElQcSiVv2QVh-k0GknwXxkJjwJcmogI3mlcc-g5IhgJrS7O1JlrV-zfA21juK9LUkFEnkNfPMRd1eakz9iuEb4swHAQN2XhdA9eMKKWD-rcHYQ1e86_JPld"/>
+</div>
+</div>
+</div>
+</section>
+</main>
+<!-- Fixed Bottom Actions -->
+<div class="fixed bottom-0 left-0 right-0 p-margin-mobile bg-surface-container-lowest/90 backdrop-blur-md border-t border-glass-border z-50 flex flex-col gap-stack-sm sm:flex-row justify-center max-w-[672px] mx-auto pb-safe">
+<button class="w-full sm:w-auto bg-primary-container text-on-primary-container font-label-caps text-label-caps py-4 px-6 rounded-xl shadow-lg hover:brightness-110 active:scale-[0.98] transition-all flex items-center justify-center gap-2 font-bold tracking-widest uppercase">
+<span>Open FluxTransfer</span>
+<span class="material-symbols-outlined text-[18px]" data-icon="open_in_new">open_in_new</span>
+</button>
+<button class="w-full sm:w-auto bg-surface-container text-on-surface font-label-caps text-label-caps py-4 px-6 rounded-xl border border-glass-border hover:bg-surface-bright active:scale-[0.98] transition-all flex items-center justify-center gap-2 tracking-widest uppercase">
+<span class="material-symbols-outlined text-[18px]" data-icon="arrow_back">arrow_back</span>
+<span>Back to Downloads</span>
+</button>
+</div>
+</body></html>

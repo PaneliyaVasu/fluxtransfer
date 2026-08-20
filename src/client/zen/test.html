@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,6 +16,7 @@
       --error: #D9695F;
       --amber: #E8A33D;
     }
+
     body {
       background: var(--bg);
       color: var(--text);
@@ -23,6 +25,7 @@
       margin: 0 auto;
       padding: 30px 20px;
     }
+
     h1 {
       font-size: 24px;
       margin-bottom: 20px;
@@ -30,6 +33,7 @@
       padding-bottom: 10px;
       color: var(--sage);
     }
+
     .stats {
       display: flex;
       gap: 20px;
@@ -39,20 +43,32 @@
       margin-bottom: 20px;
       border: 1px solid var(--line);
     }
+
     .stat-item {
       font-family: monospace;
       font-size: 14px;
     }
-    .pass-count { color: var(--sage); font-weight: bold; }
-    .fail-count { color: var(--error); font-weight: bold; }
+
+    .pass-count {
+      color: var(--sage);
+      font-weight: bold;
+    }
+
+    .fail-count {
+      color: var(--error);
+      font-weight: bold;
+    }
+
     .test-section {
       margin-top: 30px;
     }
+
     .test-section-title {
       font-size: 18px;
       color: var(--amber);
       margin-bottom: 10px;
     }
+
     .test-case {
       display: flex;
       align-items: center;
@@ -64,24 +80,34 @@
       margin-bottom: 6px;
       font-size: 13px;
     }
+
     .test-case.passed {
       border-left: 4px solid var(--sage);
     }
+
     .test-case.failed {
       border-left: 4px solid var(--error);
       background: rgba(217, 105, 95, 0.05);
     }
+
     .test-name {
       font-family: monospace;
     }
+
     .test-status {
       font-weight: bold;
       text-transform: uppercase;
       font-size: 11px;
     }
-    .test-status.passed { color: var(--sage); }
-    .test-status.failed { color: var(--error); }
-    
+
+    .test-status.passed {
+      color: var(--sage);
+    }
+
+    .test-status.failed {
+      color: var(--error);
+    }
+
     /* Mock components stylings to keep testing UI visible but off-site if needed */
     #mock-dom-elements {
       border: 1px dashed var(--line);
@@ -90,6 +116,7 @@
       margin-top: 30px;
       background: rgba(22, 33, 28, 0.2);
     }
+
     #mock-dom-elements h3 {
       font-size: 12px;
       color: var(--text-muted);
@@ -105,10 +132,11 @@
   <script src="visuals.js"></script>
   <script src="zen.js"></script>
 </head>
+
 <body>
 
   <h1>Flux Zen Automated Test Suite</h1>
-  
+
   <div class="stats">
     <div class="stat-item">Tests Run: <span id="total-run">0</span></div>
     <div class="stat-item">Passed: <span id="total-passed" class="pass-count">0</span></div>
@@ -120,14 +148,14 @@
   <!-- DOM Mock Area required for FluxZen DOM access -->
   <div id="mock-dom-elements">
     <h3>Mock Workspace DOM Structure</h3>
-    
+
     <div class="wrap">
       <div class="content-area">
         <!-- Send panel mocks -->
         <div id="sendPanel">
           <div id="sendProgressWrap" class="hidden">Mock Sender Progress Content</div>
         </div>
-        
+
         <!-- Receive panel mocks -->
         <div id="receivePanel" class="hidden">
           <div id="recvProgressWrap" class="hidden">Mock Receiver Progress Content</div>
@@ -190,7 +218,7 @@
 
       // --- SECTION: PERMANENT SPLIT LAYOUT & ALWAYS-VISIBLE PANEL ---
       section('Permanent Split Layout & Always-Visible Games');
-      
+
       setSenderActive();
       FluxZen.initDOM();
       FluxZen.render();
@@ -220,7 +248,7 @@
       FluxZen.onTransferComplete();
       fullPanel = document.getElementById('zenFullPanel');
       assert(fullPanel !== null, 'Full panel remains open after onTransferComplete');
-      
+
       const subtitle = document.getElementById('zenSubtitle');
       assert(subtitle !== null && subtitle.textContent.includes('Transfer complete!'), 'Subtitle text changes to complete message');
 
@@ -230,10 +258,10 @@
       assert(FluxZenFacts !== undefined, 'Facts provider loaded');
       const allFacts = FluxZenFacts.getAll();
       assert(allFacts.length >= 30, 'Contains 30 or more static trivia facts', `Count: ${allFacts.length}`);
-      
+
       const categories = FluxZenFacts.getCategories();
       assert(categories.includes('Technology') && categories.includes('Space') && categories.includes('Programming'), 'Covers tech, space, and coding categories');
-      
+
       const randomFact = FluxZenFacts.getRandom();
       assert(randomFact && randomFact.text && randomFact.category, 'Can load a valid random fact');
 
@@ -244,13 +272,13 @@
       // Favorites localStorage test
       const testFactId = 12;
       localStorage.removeItem('flux_zen_favorite_facts');
-      
+
       // Favorite
       let isFav = FluxZenFacts.toggleFavorite(testFactId);
       assert(isFav === true, 'Fact favorited');
       assert(FluxZenFacts.isFavorite(testFactId) === true, 'isFavorite confirms state');
       assert(FluxZenFacts.getFavoritesCount() === 1, 'Favorites count matches');
-      
+
       // Unfavorite
       isFav = FluxZenFacts.toggleFavorite(testFactId);
       assert(isFav === false, 'Fact unfavorited');
@@ -261,20 +289,20 @@
       section('Zen Relaxation & Reduced Motion');
 
       assert(FluxZenVisuals !== undefined, 'Visuals module loaded');
-      
+
       // Instantiate Breathing
       const mockWrap = document.createElement('div');
       const mockPrompt = document.createElement('div');
       const breathing = new FluxZenVisuals.BreathingGuide(mockWrap, mockPrompt);
-      
+
       breathing.start();
       assert(mockPrompt.textContent !== '', 'Breathing guide outputs text prompt');
-      
+
       // Reduced motion test simulation
       mockWrap.className = '';
       mockWrap.classList.add('reduced-motion');
       assert(mockWrap.classList.contains('reduced-motion'), 'Reduced motion class successfully applied to visual container');
-      
+
       breathing.stop();
       assert(mockPrompt.textContent === '', 'Breathing guide stop clears text prompts');
 
@@ -333,14 +361,14 @@
       const ttt2 = new FluxZenGames.TicTacToeGame(tttArea2, {});
       ttt1.init('peer', 'X');
       ttt2.init('peer', 'O');
-      
+
       assert(ttt1.isMyTurn() === true, 'Player X (host) starts as their turn');
       assert(ttt2.isMyTurn() === false, 'Player O (guest) waits for host');
-      
+
       ttt1.handleCellClick(4);
       assert(ttt1.board[4] === 'X', 'Host move marks cell 4');
       assert(lastSentMsg !== null && lastSentMsg.action === 'move' && lastSentMsg.data.cellIndex === 4, 'Host move dispatches move packet to peer');
-      
+
       ttt2.receiveMove(lastSentMsg.data);
       assert(ttt2.board[4] === 'X', 'Guest receives and applies peer move');
       assert(ttt2.isMyTurn() === true, 'Guest turn is now active');
@@ -360,4 +388,5 @@
     });
   </script>
 </body>
+
 </html>

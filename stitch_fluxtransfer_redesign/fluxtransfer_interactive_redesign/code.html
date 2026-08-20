@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>FluxTransfer - Direct. Secure. Swift.</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@500&amp;family=Space+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary-container": "#8ac3bb",
+                      "surface-container-lowest": "#07100d",
+                      "on-error": "#690005",
+                      "inverse-primary": "#006c49",
+                      "inverse-on-surface": "#29322f",
+                      "on-secondary-fixed": "#00201d",
+                      "error-container": "#93000a",
+                      "surface-tint": "#4edea3",
+                      "on-tertiary-fixed": "#410005",
+                      "tertiary-container": "#fc7c78",
+                      "on-background": "#dae5df",
+                      "on-primary-fixed": "#002113",
+                      "surface": "#0c1512",
+                      "surface-container-high": "#222c28",
+                      "on-tertiary-container": "#711419",
+                      "primary-fixed-dim": "#4edea3",
+                      "tertiary-fixed": "#ffdad7",
+                      "on-primary": "#003824",
+                      "on-primary-fixed-variant": "#005236",
+                      "on-error-container": "#ffdad6",
+                      "on-tertiary-fixed-variant": "#842225",
+                      "on-surface": "#dae5df",
+                      "glass-border": "rgba(255, 255, 255, 0.08)",
+                      "primary-container": "#10b981",
+                      "on-secondary-fixed-variant": "#0f4f49",
+                      "background": "#0c1512",
+                      "on-surface-variant": "#bbcabf",
+                      "surface-card": "#16211C",
+                      "secondary": "#97d2c9",
+                      "inverse-surface": "#dae5df",
+                      "on-tertiary": "#650911",
+                      "secondary-fixed": "#b3eee5",
+                      "text-warm": "#EDEAE2",
+                      "outline-variant": "#3c4a42",
+                      "error": "#ffb4ab",
+                      "secondary-fixed-dim": "#97d2c9",
+                      "surface-dim": "#0c1512",
+                      "surface-bright": "#323b37",
+                      "outline": "#86948a",
+                      "secondary-container": "#13524b",
+                      "accent-gold": "#E8A33D",
+                      "primary-fixed": "#6ffbbe",
+                      "on-secondary": "#003732",
+                      "primary": "#4edea3",
+                      "surface-container": "#18221e",
+                      "surface-container-low": "#141d1a",
+                      "on-primary-container": "#00422b",
+                      "surface-variant": "#2d3733",
+                      "tertiary": "#ffb3af",
+                      "tertiary-fixed-dim": "#ffb3af",
+                      "surface-container-highest": "#2d3733"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-mobile": "16px",
+                      "gutter": "24px",
+                      "stack-lg": "32px",
+                      "base": "4px",
+                      "margin-desktop": "40px",
+                      "stack-sm": "8px",
+                      "stack-md": "16px"
+              },
+              "fontFamily": {
+                      "display-lg-mobile": [
+                              "Space Grotesk", "sans-serif"
+                      ],
+                      "headline-md": [
+                              "Space Grotesk", "sans-serif"
+                      ],
+                      "body-md": [
+                              "Inter", "sans-serif"
+                      ],
+                      "display-lg": [
+                              "Space Grotesk", "sans-serif"
+                      ],
+                      "label-mono": [
+                              "JetBrains Mono", "monospace"
+                      ],
+                      "label-caps": [
+                              "Inter", "sans-serif"
+                      ],
+                      "body-lg": [
+                              "Inter", "sans-serif"
+                      ]
+              },
+              "fontSize": {
+                      "display-lg-mobile": [
+                              "36px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "label-mono": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "label-caps": [
+                              "12px",
+                              {
+                                      "lineHeight": "1",
+                                      "letterSpacing": "0.1em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        /* Custom utilities */
+        .glass-panel {
+            background: rgba(22, 33, 28, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .glow-effect {
+            position: relative;
+        }
+        
+        .glow-effect::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120%;
+            height: 120%;
+            background: radial-gradient(circle, rgba(16, 185, 129, 0.12) 0%, rgba(0, 0, 0, 0) 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        .gradient-card {
+            background: linear-gradient(135deg, rgba(22, 33, 28, 0.9) 0%, rgba(13, 21, 18, 0.9) 100%);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* Hide scrollbar for clean horizontal scrolling */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        .toggle-track {
+            background-color: rgba(13, 21, 18, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .toggle-knob {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Animations */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(78, 222, 163, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(78, 222, 163, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(78, 222, 163, 0); }
+        }
+        .logo-pulse {
+            animation: pulse-ring 2s infinite;
+        }
+
+        @keyframes fade-in-up {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-up {
+            animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        
+        .delay-100 { animation-delay: 100ms; }
+        .delay-200 { animation-delay: 200ms; }
+        .delay-300 { animation-delay: 300ms; }
+
+        /* Slide Panel */
+        .zen-panel {
+            transform: translateX(100%);
+            transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .zen-panel.open {
+            transform: translateX(0);
+        }
+        .panel-overlay {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .panel-overlay.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        /* Circular Progress */
+        .circular-chart {
+            display: block;
+            margin: 0 auto;
+            max-width: 100%;
+            max-height: 250px;
+        }
+        .circle-bg {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.05);
+            stroke-width: 3.8;
+        }
+        .circle {
+            fill: none;
+            stroke-width: 3.8;
+            stroke-linecap: round;
+            transition: stroke-dasharray 0.5s ease;
+        }
+    </style>
+</head>
+<body class="bg-surface-container-lowest text-on-surface font-body-md antialiased min-h-screen flex flex-col overflow-x-hidden">
+<!-- Overlay for Zen Panel -->
+<div class="fixed inset-0 bg-surface-container-lowest/80 backdrop-blur-sm z-40 panel-overlay" id="zen-overlay" onclick="toggleZenPanel()"></div>
+<!-- Flux Zen Panel -->
+<div class="fixed top-0 right-0 h-full w-full max-w-md bg-surface-card border-l border-glass-border z-50 zen-panel shadow-2xl flex flex-col" id="zen-panel">
+<div class="p-6 border-b border-glass-border flex justify-between items-center">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-accent-gold" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Flux Zen</h2>
+</div>
+<button class="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-on-surface-variant hover:text-on-surface transition-colors" onclick="toggleZenPanel()">
+<span class="material-symbols-outlined" style="font-size: 20px;">close</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-6 space-y-8">
+<!-- PLAY -->
+<section>
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-4">Play</h3>
+<div class="grid grid-cols-2 gap-4">
+<div class="bg-surface p-4 rounded-xl border border-glass-border hover:border-primary/50 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-3xl text-primary mb-2 group-hover:scale-110 transition-transform">stadia_controller</span>
+<h4 class="font-label-mono text-label-mono text-on-surface">Snake</h4>
+<p class="text-xs text-on-surface-variant mt-1">Classic retro</p>
+</div>
+<div class="bg-surface p-4 rounded-xl border border-glass-border hover:border-primary/50 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-3xl text-secondary mb-2 group-hover:scale-110 transition-transform">grid_on</span>
+<h4 class="font-label-mono text-label-mono text-on-surface">2048</h4>
+<p class="text-xs text-on-surface-variant mt-1">Slide &amp; merge</p>
+</div>
+<div class="bg-surface p-4 rounded-xl border border-glass-border hover:border-primary/50 transition-colors cursor-pointer group">
+<span class="material-symbols-outlined text-3xl text-accent-gold mb-2 group-hover:scale-110 transition-transform">flag</span>
+<h4 class="font-label-mono text-label-mono text-on-surface">Minesweeper</h4>
+<p class="text-xs text-on-surface-variant mt-1">Clear the board</p>
+</div>
+</div>
+</section>
+<!-- DISCOVER -->
+<section>
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-4">Discover</h3>
+<div class="bg-surface p-4 rounded-xl border border-glass-border">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-sm text-primary">rocket_launch</span>
+<span class="font-label-mono text-[10px] text-primary uppercase">Space Fact</span>
+</div>
+<p class="font-body-md text-sm text-on-surface">Neutron stars are so dense that one teaspoon of their material would weigh 6 billion tons on Earth.</p>
+<button class="mt-3 text-xs text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1">
+                        Next fact <span class="material-symbols-outlined" style="font-size: 14px;">arrow_forward</span>
+</button>
+</div>
+</section>
+<!-- ZEN -->
+<section>
+<h3 class="font-label-caps text-label-caps text-on-surface-variant mb-4">Zen</h3>
+<div class="bg-surface h-32 rounded-xl border border-glass-border overflow-hidden relative group cursor-pointer">
+<div class="absolute inset-0 bg-gradient-to-r from-primary/20 via-surface to-primary/20 bg-[length:200%_100%] animate-[gradient_3s_ease_infinite] opacity-50 group-hover:opacity-100 transition-opacity"></div>
+<div class="absolute inset-0 flex items-center justify-center">
+<span class="material-symbols-outlined text-4xl text-primary/50 group-hover:text-primary transition-colors">waves</span>
+</div>
+<p class="absolute bottom-2 left-3 text-xs font-label-mono text-on-surface-variant group-hover:text-on-surface transition-colors">Ambient Visualizer</p>
+</div>
+</section>
+</div>
+</div>
+<!-- TopNavBar -->
+<header class="bg-surface/70 backdrop-blur-xl w-full top-0 sticky border-b border-glass-border z-30">
+<div class="flex justify-between items-center w-full px-margin-desktop py-4 max-w-7xl mx-auto">
+<!-- Brand -->
+<div class="flex items-center gap-2 group cursor-pointer">
+<div class="relative">
+<div class="absolute inset-0 rounded-full logo-pulse group-hover:animate-none"></div>
+<img alt="FluxTransfer" class="w-8 h-8 rounded-md object-contain relative z-10" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHurEObWmVmkXHiaj1AngND9ISHdtJhQQVWg29kFlm-xkoJfL3Xhl1OyqPTFaCTgt1PKfjsfUJmoVlQENVJH1Z24MSDenhGaeN-zwVpRDmULIMiymbr9N85Fex9aG3-8EZGLT0K3q6dkP9R4GmNu75zM-8jrzKAzyP86idhzggMptbygyLMiAHlm9LkBAiVTWVybzoflZnbxhE8GBzKGEMKIhB3_5x8JQFxLqEV2j4rXYph-2cnWe_"/>
+</div>
+<span class="font-display-lg-mobile text-display-lg-mobile text-primary tracking-tighter">FluxTransfer</span>
+</div>
+<!-- Navigation -->
+<nav class="hidden md:flex items-center gap-8">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">How it works</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#security">Security</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#features">Features</a>
+</nav>
+<!-- Action -->
+<button class="bg-primary-container text-surface-container-lowest font-label-caps text-label-caps font-bold px-6 py-3 rounded-lg hover:brightness-110 transition-all scale-95 active:scale-90 flex items-center gap-2">
+                Start Transfer
+                <span class="material-symbols-outlined" style="font-size: 16px;">arrow_forward</span>
+</button>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow flex flex-col items-center w-full px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto py-16 gap-24 relative">
+<!-- Hero Section -->
+<section class="flex flex-col items-center text-center max-w-3xl mx-auto pt-8 opacity-0 animate-fade-in-up">
+<h1 class="font-display-lg text-display-lg md:text-[64px] leading-tight mb-stack-md text-on-surface">
+                Transfer files. <br class="hidden md:block"/>
+<span class="text-primary">Directly. Privately.</span>
+</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-stack-lg max-w-2xl mx-auto delay-100 opacity-0 animate-fade-in-up">
+                Send files between your devices using encrypted peer-to-peer connections. Nothing is uploaded to the cloud.
+            </p>
+<!-- Trust Badges -->
+<div class="flex flex-wrap justify-center gap-4 mt-4 delay-200 opacity-0 animate-fade-in-up">
+<div class="flex items-center gap-2 px-4 py-2 rounded-full border border-glass-border bg-surface-card/50 backdrop-blur-sm">
+<span class="material-symbols-outlined text-primary" style="font-size: 16px;">lock</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">End-to-end encrypted</span>
+</div>
+<div class="flex items-center gap-2 px-4 py-2 rounded-full border border-glass-border bg-surface-card/50 backdrop-blur-sm">
+<span class="material-symbols-outlined text-primary" style="font-size: 16px;">cloud_off</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">No cloud storage</span>
+</div>
+<div class="flex items-center gap-2 px-4 py-2 rounded-full border border-glass-border bg-surface-card/50 backdrop-blur-sm">
+<span class="material-symbols-outlined text-primary" style="font-size: 16px;">all_inclusive</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">Unlimited file size</span>
+</div>
+</div>
+</section>
+<!-- Main Transfer Interface -->
+<section class="w-full max-w-2xl mx-auto glow-effect delay-300 opacity-0 animate-fade-in-up" id="transfer-app">
+<div class="gradient-card rounded-2xl p-6 md:p-8 relative overflow-hidden shadow-[0_0_40px_rgba(16,185,129,0.05)] border border-primary/10">
+<!-- Decorative Elements -->
+<div class="absolute top-0 right-0 w-96 h-96 bg-primary/10 rounded-full blur-[100px] pointer-events-none -translate-y-1/2 translate-x-1/3"></div>
+<div class="absolute bottom-0 left-0 w-64 h-64 bg-secondary/5 rounded-full blur-[80px] pointer-events-none translate-y-1/2 -translate-x-1/3"></div>
+<!-- Mode Toggle -->
+<div class="flex justify-center mb-8 relative z-10">
+<div class="toggle-track p-1 rounded-lg flex relative w-64 shadow-inner">
+<div class="absolute inset-y-1 left-1 w-[calc(50%-4px)] bg-surface-card rounded shadow-sm border border-glass-border transition-all duration-300 ease-out" id="toggle-bg"></div>
+<button class="flex-1 py-2 font-label-caps text-label-caps text-on-surface relative z-10 transition-colors" id="btn-send" onclick="setMode('send')">Send</button>
+<button class="flex-1 py-2 font-label-caps text-label-caps text-on-surface-variant relative z-10 transition-colors" id="btn-receive" onclick="setMode('receive')">Receive</button>
+</div>
+</div>
+<!-- Send Mode -->
+<div class="flex flex-col gap-6 relative z-10 transition-opacity duration-300" id="send-mode">
+<div class="border-2 border-dashed border-primary/20 rounded-xl bg-surface/30 h-64 flex flex-col items-center justify-center p-6 text-center hover:bg-surface/50 hover:border-primary/40 transition-all cursor-pointer group" onclick="startTransferSim()">
+<div class="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center mb-4 group-hover:bg-primary/20 group-hover:scale-110 transition-all duration-300">
+<span class="material-symbols-outlined text-3xl text-primary/70 group-hover:text-primary transition-colors">upload_file</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface mb-2">Drop files here or click</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Files stay on your device until the transfer begins.</p>
+</div>
+<button class="w-full bg-primary-container text-surface-container-lowest font-headline-md text-headline-md font-bold py-4 rounded-xl hover:brightness-110 transition-all flex justify-center items-center gap-2 h-[56px] shadow-lg shadow-primary/20" onclick="startTransferSim()">
+                        Choose Files
+                        <span class="material-symbols-outlined">folder_open</span>
+</button>
+</div>
+<!-- Transfer Progress Mode (Hidden initially) -->
+<div class="hidden flex flex-col items-center justify-center h-[336px] relative z-10 transition-opacity duration-300" id="progress-mode">
+<div class="relative w-48 h-48 mb-6">
+<svg class="circular-chart" viewbox="0 0 36 36">
+<path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"></path>
+<path class="circle stroke-primary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" stroke-dasharray="72, 100"></path>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="font-display-lg text-4xl text-on-surface font-bold">72%</span>
+</div>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface mb-1">Transferring Design_Assets_v2.zip</h3>
+<div class="flex items-center gap-4 text-on-surface-variant">
+<span class="font-label-mono text-sm">17.2 MB/s</span>
+<span class="w-1 h-1 rounded-full bg-glass-border"></span>
+<span class="font-label-mono text-sm">24.5 / 34 MB</span>
+</div>
+<button class="mt-6 px-6 py-2 border border-glass-border rounded-lg text-on-surface-variant hover:bg-surface-card transition-colors font-label-caps" onclick="resetTransfer()">Cancel</button>
+</div>
+<!-- Receive Mode (Hidden by default) -->
+<div class="hidden flex flex-col items-center justify-center h-[336px] gap-8 relative z-10 transition-opacity duration-300" id="receive-mode">
+<div class="text-center">
+<p class="font-label-caps text-label-caps text-on-surface-variant mb-4">Pairing Code</p>
+<div class="font-label-mono text-[48px] font-bold text-primary tracking-[0.2em] bg-surface/50 p-6 rounded-xl border border-primary/20 shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                            6899
+                        </div>
+</div>
+<button class="bg-surface-container-high border border-glass-border text-on-surface font-label-caps text-label-caps font-bold py-3 px-8 rounded-lg hover:bg-surface-card transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined">qr_code_scanner</span>
+                        Scan QR Code
+                    </button>
+</div>
+</div>
+<!-- Transfer History (Compact List) -->
+<div class="mt-8 opacity-0 animate-fade-in-up delay-300">
+<h4 class="font-label-caps text-label-caps text-on-surface-variant mb-4 px-2">Recent Transfers</h4>
+<div class="flex flex-col gap-2">
+<!-- Item 1 -->
+<div class="flex items-center p-3 rounded-lg hover:bg-surface-card transition-colors cursor-pointer group">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center mr-4 group-hover:bg-primary/10 transition-colors">
+<span class="material-symbols-outlined text-primary text-xl">image</span>
+</div>
+<div class="flex-grow">
+<p class="font-body-md text-body-md text-on-surface">Website_Mockups_Final.fig</p>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-label-mono text-label-mono text-on-surface-variant">142 MB</span>
+<span class="font-label-caps text-[10px] text-primary flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">check_circle</span> Completed
+                            </span>
+</div>
+</div>
+<!-- Item 2 -->
+<div class="flex items-center p-3 rounded-lg hover:bg-surface-card transition-colors cursor-pointer border-t border-glass-border/50 group">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center mr-4 group-hover:bg-secondary/10 transition-colors">
+<span class="material-symbols-outlined text-secondary text-xl">videocam</span>
+</div>
+<div class="flex-grow">
+<p class="font-body-md text-body-md text-on-surface">Promo_Video_V1.mp4</p>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-label-mono text-label-mono text-on-surface-variant">512 MB</span>
+<span class="font-label-caps text-[10px] text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">history</span> Yesterday
+                            </span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Floating Widget: Flux Zen -->
+<div class="fixed bottom-8 right-8 z-40 hidden lg:block opacity-0 animate-fade-in-up delay-300">
+<div class="glass-panel p-4 rounded-xl flex items-center gap-3 cursor-pointer hover:bg-surface-card hover:border-primary/30 transition-all shadow-lg shadow-primary/10 group" onclick="toggleZenPanel()">
+<div class="relative">
+<div class="absolute inset-0 bg-accent-gold/20 rounded-full blur-md group-hover:bg-accent-gold/40 transition-colors"></div>
+<span class="material-symbols-outlined text-accent-gold relative z-10 group-hover:rotate-12 transition-transform" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+</div>
+<div>
+<p class="font-label-caps text-label-caps text-on-surface group-hover:text-primary transition-colors">Flux Zen</p>
+<p class="font-label-mono text-[10px] text-on-surface-variant">Ambient mode</p>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-lowest border-t border-glass-border mt-16 w-full relative z-30">
+<div class="flex flex-col md:flex-row justify-between items-center w-full px-margin-desktop py-stack-lg max-w-7xl mx-auto gap-4">
+<div class="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+<img alt="FluxTransfer Logo" class="w-6 h-6 rounded-sm opacity-80" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHurEObWmVmkXHiaj1AngND9ISHdtJhQQVWg29kFlm-xkoJfL3Xhl1OyqPTFaCTgt1PKfjsfUJmoVlQENVJH1Z24MSDenhGaeN-zwVpRDmULIMiymbr9N85Fex9aG3-8EZGLT0K3q6dkP9R4GmNu75zM-8jrzKAzyP86idhzggMptbygyLMiAHlm9LkBAiVTWVybzoflZnbxhE8GBzKGEMKIhB3_5x8JQFxLqEV2j4rXYph-2cnWe_"/>
+<span class="text-lg">FluxTransfer</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant text-center md:text-left">
+                © 2024 FluxTransfer. Direct. Secure. Swift.
+            </p>
+<nav class="flex gap-6">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Privacy</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Terms</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Github</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Support</a>
+</nav>
+</div>
+</footer>
+<script>
+    function setMode(mode) {
+        const toggleBg = document.getElementById('toggle-bg');
+        const sendBtn = document.getElementById('btn-send');
+        const receiveBtn = document.getElementById('btn-receive');
+        
+        const sendMode = document.getElementById('send-mode');
+        const receiveMode = document.getElementById('receive-mode');
+        const progressMode = document.getElementById('progress-mode');
+
+        // Reset progress mode if active
+        progressMode.classList.add('hidden');
+
+        if (mode === 'send') {
+            toggleBg.style.transform = 'translateX(0)';
+            sendBtn.classList.replace('text-on-surface-variant', 'text-on-surface');
+            receiveBtn.classList.replace('text-on-surface', 'text-on-surface-variant');
+            
+            receiveMode.style.opacity = '0';
+            setTimeout(() => {
+                receiveMode.classList.add('hidden');
+                sendMode.classList.remove('hidden');
+                // Small delay to allow display:block to apply before animating opacity
+                setTimeout(() => sendMode.style.opacity = '1', 10);
+            }, 300);
+            
+        } else {
+            toggleBg.style.transform = 'translateX(100%)';
+            receiveBtn.classList.replace('text-on-surface-variant', 'text-on-surface');
+            sendBtn.classList.replace('text-on-surface', 'text-on-surface-variant');
+            
+            sendMode.style.opacity = '0';
+            setTimeout(() => {
+                sendMode.classList.add('hidden');
+                receiveMode.classList.remove('hidden');
+                setTimeout(() => receiveMode.style.opacity = '1', 10);
+            }, 300);
+        }
+    }
+
+    function toggleZenPanel() {
+        const panel = document.getElementById('zen-panel');
+        const overlay = document.getElementById('zen-overlay');
+        panel.classList.toggle('open');
+        overlay.classList.toggle('open');
+    }
+
+    function startTransferSim() {
+        const sendMode = document.getElementById('send-mode');
+        const progressMode = document.getElementById('progress-mode');
+        
+        sendMode.style.opacity = '0';
+        setTimeout(() => {
+            sendMode.classList.add('hidden');
+            progressMode.classList.remove('hidden');
+            setTimeout(() => progressMode.style.opacity = '1', 10);
+        }, 300);
+    }
+
+    function resetTransfer() {
+        const sendMode = document.getElementById('send-mode');
+        const progressMode = document.getElementById('progress-mode');
+        
+        progressMode.style.opacity = '0';
+        setTimeout(() => {
+            progressMode.classList.add('hidden');
+            sendMode.classList.remove('hidden');
+            setTimeout(() => sendMode.style.opacity = '1', 10);
+        }, 300);
+    }
+</script>
+</body></html>

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Download FluxTransfer - FluxTransfer</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&amp;family=Space+Grotesk:wght@600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "accent-gold": "#E8A33D",
+                        "on-secondary-container": "#8ac3bb",
+                        "inverse-surface": "#dae5df",
+                        "on-secondary": "#003732",
+                        "on-tertiary-fixed": "#410005",
+                        "on-tertiary-container": "#711419",
+                        "surface": "#0c1512",
+                        "surface-container-low": "#141d1a",
+                        "on-primary-fixed": "#002113",
+                        "on-secondary-fixed-variant": "#0f4f49",
+                        "primary": "#4edea3",
+                        "primary-container": "#10b981",
+                        "secondary-container": "#13524b",
+                        "surface-container": "#18221e",
+                        "tertiary-fixed-dim": "#ffb3af",
+                        "background": "#0c1512",
+                        "surface-bright": "#323b37",
+                        "inverse-primary": "#006c49",
+                        "surface-tint": "#4edea3",
+                        "on-tertiary-fixed-variant": "#842225",
+                        "outline": "#86948a",
+                        "on-surface-variant": "#bbcabf",
+                        "error": "#ffb4ab",
+                        "on-tertiary": "#650911",
+                        "tertiary-container": "#fc7c78",
+                        "surface-container-high": "#222c28",
+                        "primary-fixed-dim": "#4edea3",
+                        "on-error": "#690005",
+                        "on-secondary-fixed": "#00201d",
+                        "secondary": "#97d2c9",
+                        "error-container": "#93000a",
+                        "inverse-on-surface": "#29322f",
+                        "on-error-container": "#ffdad6",
+                        "glass-border": "rgba(255, 255, 255, 0.08)",
+                        "surface-card": "#16211C",
+                        "on-primary-fixed-variant": "#005236",
+                        "on-primary-container": "#00422b",
+                        "secondary-fixed-dim": "#97d2c9",
+                        "tertiary-fixed": "#ffdad7",
+                        "outline-variant": "#3c4a42",
+                        "tertiary": "#ffb3af",
+                        "primary-fixed": "#6ffbbe",
+                        "surface-container-lowest": "#07100d",
+                        "surface-variant": "#2d3733",
+                        "on-primary": "#003824",
+                        "on-background": "#dae5df",
+                        "text-warm": "#EDEAE2",
+                        "surface-dim": "#0c1512",
+                        "secondary-fixed": "#b3eee5",
+                        "surface-container-highest": "#2d3733",
+                        "on-surface": "#dae5df"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-sm": "8px",
+                        "stack-lg": "32px",
+                        "margin-mobile": "16px",
+                        "stack-md": "16px",
+                        "base": "4px",
+                        "gutter": "24px",
+                        "margin-desktop": "40px"
+                    },
+                    "fontFamily": {
+                        "body-md": ["Inter"],
+                        "headline-md": ["Space Grotesk"],
+                        "display-lg-mobile": ["Space Grotesk"],
+                        "label-mono": ["JetBrains Mono"],
+                        "display-lg": ["Space Grotesk"],
+                        "body-lg": ["Inter"],
+                        "label-caps": ["Inter"]
+                    },
+                    "fontSize": {
+                        "body-md": ["16px", { "lineHeight": "1.5", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "1.3", "fontWeight": "600" }],
+                        "display-lg-mobile": ["36px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "label-mono": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "500" }],
+                        "display-lg": ["48px", { "lineHeight": "1.1", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "label-caps": ["12px", { "lineHeight": "1", "letterSpacing": "0.1em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: linear-gradient(135deg, rgba(22, 33, 28, 0.6) 0%, rgba(12, 21, 18, 0.8) 100%);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .gradient-card {
+            background: linear-gradient(180deg, rgba(34, 44, 40, 0.4) 0%, rgba(20, 29, 26, 0.6) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glow-effect::before {
+            content: '';
+            position: absolute;
+            inset: -2px;
+            background: radial-gradient(circle at center, rgba(78, 222, 163, 0.12) 0%, transparent 70%);
+            z-index: -1;
+            border-radius: inherit;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background antialiased font-body-md">
+<!-- TopNavBar -->
+<nav class="docked full-width top-0 sticky bg-surface/70 backdrop-blur-xl border-b border-glass-border flat no shadows z-50">
+<div class="flex justify-between items-center w-full px-margin-desktop py-4 max-w-7xl mx-auto">
+<div class="font-display-lg-mobile text-display-lg-mobile text-primary tracking-tighter">
+                FluxTransfer
+            </div>
+<div class="hidden md:flex gap-gutter items-center">
+<a class="text-on-surface-variant hover:text-primary transition-colors hover:bg-primary/10 hover:text-primary rounded-lg transition-all px-3 py-2 font-label-caps text-label-caps" href="#">How it works</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors hover:bg-primary/10 hover:text-primary rounded-lg transition-all px-3 py-2 font-label-caps text-label-caps" href="#">Security</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors hover:bg-primary/10 hover:text-primary rounded-lg transition-all px-3 py-2 font-label-caps text-label-caps" href="#">Features</a>
+</div>
+<button class="bg-primary-container text-on-primary-container hover:brightness-110 active:scale-95 transition-all px-6 py-2 rounded-lg font-label-caps text-label-caps shadow-lg scale-95 active:scale-90 transition-transform hidden md:block">
+                Start Transfer
+            </button>
+</div>
+</nav>
+<!-- Main Content -->
+<main class="w-full">
+<!-- Hero Section -->
+<section class="relative pt-32 pb-24 px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto overflow-hidden">
+<div class="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.15),transparent_50%)] pointer-events-none"></div>
+<div class="flex flex-col items-center text-center max-w-3xl mx-auto relative z-10 space-y-stack-lg">
+<h1 class="font-display-lg text-display-lg md:text-[64px] tracking-tighter text-on-surface">
+                    FluxTransfer, wherever you need it.
+                </h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">
+                    Seamless peer-to-peer file transfer across all your devices. No limits, pure speed, and total security.
+                </p>
+<div class="flex flex-col sm:flex-row gap-stack-md pt-stack-sm">
+<button class="bg-primary-container text-on-primary-container hover:brightness-110 active:scale-95 transition-all px-8 py-4 rounded-xl font-headline-md text-[18px] shadow-lg flex items-center justify-center gap-2">
+<span class="material-symbols-outlined" data-icon="download">download</span>
+                        Download FluxTransfer
+                    </button>
+<button class="glass-panel text-on-surface hover:bg-surface-bright transition-all px-8 py-4 rounded-xl font-headline-md text-[18px] flex items-center justify-center gap-2">
+<span class="material-symbols-outlined" data-icon="language">language</span>
+                        Use Web App
+                    </button>
+</div>
+<div class="w-full h-64 md:h-96 mt-stack-lg rounded-2xl overflow-hidden relative glass-panel p-2">
+<img class="w-full h-full object-cover rounded-xl opacity-80 mix-blend-screen" data-alt="A sophisticated digital rendering of an iPhone, a MacBook, and a Windows laptop seamlessly connected by glowing green ethereal data streams in a dark obsidian studio environment. The devices appear premium and minimalist. High-key edge lighting highlights the metallic textures against the deep #0c1512 background. The visual communicates speed, security, and cross-platform synergy with subtle emerald accents." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBvZ0sQ9wSDBZgE1YYT0j1wU3yLgrQ1nmw-RAW7J8r4lYvhiL_4widVovO5trjWHcMqs7LHdT7DQ1TPlq112dYoHxG6PFzvh92ZX1OZoj2HVmalG3GeuF0t45gL-gmoYgQfa2g101y_YqoNimUQeHYxJX7Q68jgz8k1K1fRUe_uqC_ayVqpnDJjlnKGdtgQvGzX9UEwX6qwdZuL1tmGnV8z0vu5XhFq2Me4oDLz9w90VbMzVk9vx6i8"/>
+</div>
+</div>
+</section>
+<!-- Download Detection -->
+<section class="py-stack-lg px-margin-mobile md:px-margin-desktop max-w-3xl mx-auto">
+<div class="gradient-card rounded-2xl p-stack-lg flex flex-col md:flex-row items-center justify-between gap-stack-md glow-effect relative">
+<div class="flex items-center gap-stack-md">
+<div class="bg-surface-bright p-4 rounded-full text-primary">
+<span class="material-symbols-outlined text-[32px]" data-icon="laptop_windows">laptop_windows</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">You're using Chrome on Windows</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">We recommend the native Windows app for the best performance.</p>
+</div>
+</div>
+<button class="bg-primary/20 text-primary hover:bg-primary/30 transition-colors px-6 py-3 rounded-lg font-label-caps text-label-caps shrink-0 border border-primary/30">
+                    Get Windows App
+                </button>
+</div>
+</section>
+<!-- Platform Cards -->
+<section class="py-24 px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto">
+<h2 class="font-display-lg-mobile text-display-lg-mobile text-center text-on-surface mb-16">Available on all platforms</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-gutter">
+<!-- macOS -->
+<div class="glass-panel rounded-2xl p-stack-lg hover:border-primary/50 transition-colors group cursor-pointer flex flex-col items-center text-center space-y-stack-md">
+<div class="w-16 h-16 rounded-2xl bg-surface-bright flex items-center justify-center text-on-surface group-hover:text-primary transition-colors group-hover:scale-110 duration-300">
+<span class="material-symbols-outlined text-[32px]" data-icon="desktop_mac">desktop_mac</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">macOS</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">macOS 11.0 or later</p>
+</div>
+<span class="font-label-mono text-label-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                        Download dmg <span class="material-symbols-outlined text-[16px]" data-icon="arrow_downward">arrow_downward</span>
+</span>
+</div>
+<!-- Windows -->
+<div class="glass-panel rounded-2xl p-stack-lg hover:border-primary/50 transition-colors group cursor-pointer flex flex-col items-center text-center space-y-stack-md">
+<div class="w-16 h-16 rounded-2xl bg-surface-bright flex items-center justify-center text-on-surface group-hover:text-primary transition-colors group-hover:scale-110 duration-300">
+<span class="material-symbols-outlined text-[32px]" data-icon="desktop_windows">desktop_windows</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Windows</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">Windows 10 or later</p>
+</div>
+<span class="font-label-mono text-label-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                        Download exe <span class="material-symbols-outlined text-[16px]" data-icon="arrow_downward">arrow_downward</span>
+</span>
+</div>
+<!-- Linux -->
+<div class="glass-panel rounded-2xl p-stack-lg hover:border-primary/50 transition-colors group cursor-pointer flex flex-col items-center text-center space-y-stack-md">
+<div class="w-16 h-16 rounded-2xl bg-surface-bright flex items-center justify-center text-on-surface group-hover:text-primary transition-colors group-hover:scale-110 duration-300">
+<span class="material-symbols-outlined text-[32px]" data-icon="terminal">terminal</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Linux</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">AppImage / Snap</p>
+</div>
+<span class="font-label-mono text-label-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                        Download AppImage <span class="material-symbols-outlined text-[16px]" data-icon="arrow_downward">arrow_downward</span>
+</span>
+</div>
+<!-- iOS/iPadOS -->
+<div class="glass-panel rounded-2xl p-stack-lg hover:border-primary/50 transition-colors group cursor-pointer flex flex-col items-center text-center space-y-stack-md md:col-span-2 lg:col-span-1 lg:col-start-2">
+<div class="w-16 h-16 rounded-2xl bg-surface-bright flex items-center justify-center text-on-surface group-hover:text-primary transition-colors group-hover:scale-110 duration-300">
+<span class="material-symbols-outlined text-[32px]" data-icon="phone_iphone">phone_iphone</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">iPhone / iPad</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">Install via Safari (PWA)</p>
+</div>
+<span class="font-label-mono text-label-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                        View Instructions <span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</span>
+</div>
+<!-- Android -->
+<div class="glass-panel rounded-2xl p-stack-lg hover:border-primary/50 transition-colors group cursor-pointer flex flex-col items-center text-center space-y-stack-md md:col-span-2 lg:col-span-1">
+<div class="w-16 h-16 rounded-2xl bg-surface-bright flex items-center justify-center text-on-surface group-hover:text-primary transition-colors group-hover:scale-110 duration-300">
+<span class="material-symbols-outlined text-[32px]" data-icon="smartphone">smartphone</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Android</h3>
+<p class="font-body-md text-body-md text-on-surface-variant mt-2">Get it on Google Play</p>
+</div>
+<span class="font-label-mono text-label-mono text-primary opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                        Open Store <span class="material-symbols-outlined text-[16px]" data-icon="open_in_new">open_in_new</span>
+</span>
+</div>
+</div>
+</section>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-lowest border-t border-glass-border flat full-width">
+<div class="flex flex-col md:flex-row justify-between items-center w-full px-margin-desktop py-stack-lg max-w-7xl mx-auto">
+<div class="font-headline-md text-headline-md text-on-surface mb-4 md:mb-0">
+                FluxTransfer
+            </div>
+<div class="flex gap-gutter mb-4 md:mb-0">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Privacy</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Terms</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Github</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Support</a>
+</div>
+<div class="font-body-md text-body-md text-on-surface-variant text-center md:text-right">
+                © 2024 FluxTransfer. Direct. Secure. Swift.
+            </div>
+</div>
+</footer>
+</body></html>

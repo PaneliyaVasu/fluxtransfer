@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>FluxTransfer - Direct. Secure. Swift.</title>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@500&amp;family=Space+Grotesk:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-secondary-container": "#8ac3bb",
+                      "surface-container-lowest": "#07100d",
+                      "on-error": "#690005",
+                      "inverse-primary": "#006c49",
+                      "inverse-on-surface": "#29322f",
+                      "on-secondary-fixed": "#00201d",
+                      "error-container": "#93000a",
+                      "surface-tint": "#4edea3",
+                      "on-tertiary-fixed": "#410005",
+                      "tertiary-container": "#fc7c78",
+                      "on-background": "#dae5df",
+                      "on-primary-fixed": "#002113",
+                      "surface": "#0c1512",
+                      "surface-container-high": "#222c28",
+                      "on-tertiary-container": "#711419",
+                      "primary-fixed-dim": "#4edea3",
+                      "tertiary-fixed": "#ffdad7",
+                      "on-primary": "#003824",
+                      "on-primary-fixed-variant": "#005236",
+                      "on-error-container": "#ffdad6",
+                      "on-tertiary-fixed-variant": "#842225",
+                      "on-surface": "#dae5df",
+                      "glass-border": "rgba(255, 255, 255, 0.08)",
+                      "primary-container": "#10b981",
+                      "on-secondary-fixed-variant": "#0f4f49",
+                      "background": "#0c1512",
+                      "on-surface-variant": "#bbcabf",
+                      "surface-card": "#16211C",
+                      "secondary": "#97d2c9",
+                      "inverse-surface": "#dae5df",
+                      "on-tertiary": "#650911",
+                      "secondary-fixed": "#b3eee5",
+                      "text-warm": "#EDEAE2",
+                      "outline-variant": "#3c4a42",
+                      "error": "#ffb4ab",
+                      "secondary-fixed-dim": "#97d2c9",
+                      "surface-dim": "#0c1512",
+                      "surface-bright": "#323b37",
+                      "outline": "#86948a",
+                      "secondary-container": "#13524b",
+                      "accent-gold": "#E8A33D",
+                      "primary-fixed": "#6ffbbe",
+                      "on-secondary": "#003732",
+                      "primary": "#4edea3",
+                      "surface-container": "#18221e",
+                      "surface-container-low": "#141d1a",
+                      "on-primary-container": "#00422b",
+                      "surface-variant": "#2d3733",
+                      "tertiary": "#ffb3af",
+                      "tertiary-fixed-dim": "#ffb3af",
+                      "surface-container-highest": "#2d3733"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.25rem",
+                      "lg": "0.5rem",
+                      "xl": "0.75rem",
+                      "full": "9999px"
+              },
+              "spacing": {
+                      "margin-mobile": "16px",
+                      "gutter": "24px",
+                      "stack-lg": "32px",
+                      "base": "4px",
+                      "margin-desktop": "40px",
+                      "stack-sm": "8px",
+                      "stack-md": "16px"
+              },
+              "fontFamily": {
+                      "display-lg-mobile": [
+                              "Space Grotesk", "sans-serif"
+                      ],
+                      "headline-md": [
+                              "Space Grotesk", "sans-serif"
+                      ],
+                      "body-md": [
+                              "Inter", "sans-serif"
+                      ],
+                      "display-lg": [
+                              "Space Grotesk", "sans-serif"
+                      ],
+                      "label-mono": [
+                              "JetBrains Mono", "monospace"
+                      ],
+                      "label-caps": [
+                              "Inter", "sans-serif"
+                      ],
+                      "body-lg": [
+                              "Inter", "sans-serif"
+                      ]
+              },
+              "fontSize": {
+                      "display-lg-mobile": [
+                              "36px",
+                              {
+                                      "lineHeight": "1.2",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "headline-md": [
+                              "24px",
+                              {
+                                      "lineHeight": "1.3",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-md": [
+                              "16px",
+                              {
+                                      "lineHeight": "1.5",
+                                      "fontWeight": "400"
+                              }
+                      ],
+                      "display-lg": [
+                              "48px",
+                              {
+                                      "lineHeight": "1.1",
+                                      "letterSpacing": "-0.02em",
+                                      "fontWeight": "700"
+                              }
+                      ],
+                      "label-mono": [
+                              "14px",
+                              {
+                                      "lineHeight": "1.4",
+                                      "letterSpacing": "0.05em",
+                                      "fontWeight": "500"
+                              }
+                      ],
+                      "label-caps": [
+                              "12px",
+                              {
+                                      "lineHeight": "1",
+                                      "letterSpacing": "0.1em",
+                                      "fontWeight": "600"
+                              }
+                      ],
+                      "body-lg": [
+                              "18px",
+                              {
+                                      "lineHeight": "1.6",
+                                      "fontWeight": "400"
+                              }
+                      ]
+              }
+      },
+          },
+        }
+    </script>
+<style>
+        /* Custom utilities */
+        .glass-panel {
+            background: rgba(22, 33, 28, 0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .glow-effect {
+            position: relative;
+        }
+        
+        .glow-effect::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120%;
+            height: 120%;
+            background: radial-gradient(circle, rgba(16, 185, 129, 0.08) 0%, rgba(0, 0, 0, 0) 70%);
+            z-index: -1;
+            pointer-events: none;
+        }
+
+        .gradient-card {
+            background: linear-gradient(135deg, #16211C 0%, #0D1512 100%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        /* Hide scrollbar for clean horizontal scrolling */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        
+        .toggle-track {
+            background-color: #0D1512;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        .toggle-knob {
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="bg-surface-container-lowest text-on-surface font-body-md antialiased min-h-screen flex flex-col">
+<!-- TopNavBar -->
+<header class="bg-surface/70 backdrop-blur-xl w-full top-0 sticky border-b border-glass-border z-50">
+<div class="flex justify-between items-center w-full px-margin-desktop py-4 max-w-7xl mx-auto">
+<!-- Brand -->
+<div class="flex items-center gap-2">
+<img alt="FluxTransfer" class="w-8 h-8 rounded-md object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHurEObWmVmkXHiaj1AngND9ISHdtJhQQVWg29kFlm-xkoJfL3Xhl1OyqPTFaCTgt1PKfjsfUJmoVlQENVJH1Z24MSDenhGaeN-zwVpRDmULIMiymbr9N85Fex9aG3-8EZGLT0K3q6dkP9R4GmNu75zM-8jrzKAzyP86idhzggMptbygyLMiAHlm9LkBAiVTWVybzoflZnbxhE8GBzKGEMKIhB3_5x8JQFxLqEV2j4rXYph-2cnWe_"/>
+<span class="font-display-lg-mobile text-display-lg-mobile text-primary tracking-tighter">FluxTransfer</span>
+</div>
+<!-- Navigation -->
+<nav class="hidden md:flex items-center gap-8">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#how-it-works">How it works</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#security">Security</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#features">Features</a>
+</nav>
+<!-- Action -->
+<button class="bg-primary-container text-surface-container-lowest font-label-caps text-label-caps font-bold px-6 py-3 rounded-lg hover:brightness-110 transition-all scale-95 active:scale-90 flex items-center gap-2">
+                Start Transfer
+                <span class="material-symbols-outlined" style="font-size: 16px;">arrow_forward</span>
+</button>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-grow flex flex-col items-center w-full px-margin-mobile md:px-margin-desktop max-w-7xl mx-auto py-16 gap-24 relative">
+<!-- Hero Section -->
+<section class="flex flex-col items-center text-center max-w-3xl mx-auto pt-8">
+<h1 class="font-display-lg text-display-lg md:text-[64px] leading-tight mb-stack-md text-on-surface">
+                Transfer files. <br class="hidden md:block"/>
+<span class="text-primary">Directly. Privately.</span>
+</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant mb-stack-lg max-w-2xl mx-auto">
+                Send files between your devices using encrypted peer-to-peer connections. Nothing is uploaded to the cloud.
+            </p>
+<!-- Trust Badges -->
+<div class="flex flex-wrap justify-center gap-4 mt-4">
+<div class="flex items-center gap-2 px-4 py-2 rounded-full border border-glass-border bg-surface-card">
+<span class="material-symbols-outlined text-primary" style="font-size: 16px;">lock</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">End-to-end encrypted</span>
+</div>
+<div class="flex items-center gap-2 px-4 py-2 rounded-full border border-glass-border bg-surface-card">
+<span class="material-symbols-outlined text-primary" style="font-size: 16px;">cloud_off</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">No cloud storage</span>
+</div>
+<div class="flex items-center gap-2 px-4 py-2 rounded-full border border-glass-border bg-surface-card">
+<span class="material-symbols-outlined text-primary" style="font-size: 16px;">all_inclusive</span>
+<span class="font-label-caps text-label-caps text-on-surface-variant">Unlimited file size</span>
+</div>
+</div>
+</section>
+<!-- Main Transfer Interface -->
+<section class="w-full max-w-2xl mx-auto glow-effect" id="transfer-app">
+<div class="gradient-card rounded-2xl p-6 md:p-8 relative overflow-hidden shadow-2xl shadow-primary/5">
+<!-- Decorative Elements -->
+<div class="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-[80px] pointer-events-none -translate-y-1/2 translate-x-1/3"></div>
+<!-- Mode Toggle -->
+<div class="flex justify-center mb-8">
+<div class="toggle-track p-1 rounded-lg flex relative w-64">
+<div class="absolute inset-y-1 left-1 w-[calc(50%-4px)] bg-surface-card rounded shadow-sm border border-glass-border transition-all duration-300" id="toggle-bg"></div>
+<button class="flex-1 py-2 font-label-caps text-label-caps text-on-surface relative z-10" onclick="document.getElementById('toggle-bg').style.transform='translateX(0)'; document.getElementById('send-mode').classList.remove('hidden'); document.getElementById('receive-mode').classList.add('hidden');">Send</button>
+<button class="flex-1 py-2 font-label-caps text-label-caps text-on-surface-variant relative z-10" onclick="document.getElementById('toggle-bg').style.transform='translateX(100%)'; document.getElementById('send-mode').classList.add('hidden'); document.getElementById('receive-mode').classList.remove('hidden');">Receive</button>
+</div>
+</div>
+<!-- Send Mode -->
+<div class="flex flex-col gap-6" id="send-mode">
+<div class="border-2 border-dashed border-glass-border rounded-xl bg-surface/50 h-64 flex flex-col items-center justify-center p-6 text-center hover:bg-surface-card transition-colors cursor-pointer group">
+<div class="w-16 h-16 rounded-full bg-surface-container-high flex items-center justify-center mb-4 group-hover:bg-primary/10 transition-colors">
+<span class="material-symbols-outlined text-3xl text-on-surface-variant group-hover:text-primary transition-colors">upload_file</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface mb-2">Drop files here or choose from device</h3>
+<p class="font-body-md text-body-md text-on-surface-variant">Files stay on your device until the transfer begins.</p>
+</div>
+<button class="w-full bg-primary-container text-surface-container-lowest font-headline-md text-headline-md font-bold py-4 rounded-xl hover:brightness-110 transition-all flex justify-center items-center gap-2 h-[56px]">
+                        Choose Files
+                        <span class="material-symbols-outlined">folder_open</span>
+</button>
+</div>
+<!-- Receive Mode (Hidden by default) -->
+<div class="hidden flex flex-col items-center justify-center h-[336px] gap-8" id="receive-mode">
+<div class="text-center">
+<p class="font-label-caps text-label-caps text-on-surface-variant mb-4">Pairing Code</p>
+<div class="font-label-mono text-[48px] font-bold text-primary tracking-[0.2em] bg-surface p-6 rounded-xl border border-glass-border">
+                            6899
+                        </div>
+</div>
+<button class="bg-surface-container-high border border-glass-border text-on-surface font-label-caps text-label-caps font-bold py-3 px-8 rounded-lg hover:bg-surface-card transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined">qr_code_scanner</span>
+                        Scan QR Code
+                    </button>
+</div>
+</div>
+<!-- Transfer History (Compact List) -->
+<div class="mt-8">
+<h4 class="font-label-caps text-label-caps text-on-surface-variant mb-4 px-2">Recent Transfers</h4>
+<div class="flex flex-col gap-2">
+<!-- Item 1 -->
+<div class="flex items-center p-3 rounded-lg hover:bg-surface-card transition-colors cursor-pointer">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center mr-4">
+<span class="material-symbols-outlined text-primary text-xl">image</span>
+</div>
+<div class="flex-grow">
+<p class="font-body-md text-body-md text-on-surface">Design_Assets_v2.zip</p>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-label-mono text-label-mono text-on-surface-variant">24.5 MB</span>
+<span class="font-label-caps text-[10px] text-primary flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">check_circle</span> Completed
+                            </span>
+</div>
+</div>
+<!-- Item 2 -->
+<div class="flex items-center p-3 rounded-lg hover:bg-surface-card transition-colors cursor-pointer border-t border-glass-border/50">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high flex items-center justify-center mr-4">
+<span class="material-symbols-outlined text-accent-gold text-xl">description</span>
+</div>
+<div class="flex-grow">
+<p class="font-body-md text-body-md text-on-surface">Q3_Report_Final.pdf</p>
+</div>
+<div class="text-right flex flex-col items-end">
+<span class="font-label-mono text-label-mono text-on-surface-variant">3.2 MB</span>
+<span class="font-label-caps text-[10px] text-accent-gold flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">sync</span> Transferring
+                            </span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Floating Widget: Flux Zen -->
+<div class="fixed bottom-8 right-8 z-40 hidden lg:block">
+<div class="glass-panel p-4 rounded-xl flex items-center gap-3 cursor-pointer hover:bg-surface-card/80 transition-all shadow-lg shadow-primary/5">
+<span class="material-symbols-outlined text-accent-gold" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+<div>
+<p class="font-label-caps text-label-caps text-on-surface">Flux Zen</p>
+<p class="font-label-mono text-[10px] text-on-surface-variant">Ambient mode</p>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="bg-surface-container-lowest border-t border-glass-border mt-16 w-full">
+<div class="flex flex-col md:flex-row justify-between items-center w-full px-margin-desktop py-stack-lg max-w-7xl mx-auto gap-4">
+<div class="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+<img alt="FluxTransfer Logo" class="w-6 h-6 rounded-sm opacity-80" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCHurEObWmVmkXHiaj1AngND9ISHdtJhQQVWg29kFlm-xkoJfL3Xhl1OyqPTFaCTgt1PKfjsfUJmoVlQENVJH1Z24MSDenhGaeN-zwVpRDmULIMiymbr9N85Fex9aG3-8EZGLT0K3q6dkP9R4GmNu75zM-8jrzKAzyP86idhzggMptbygyLMiAHlm9LkBAiVTWVybzoflZnbxhE8GBzKGEMKIhB3_5x8JQFxLqEV2j4rXYph-2cnWe_"/>
+<span class="text-lg">FluxTransfer</span>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant text-center md:text-left">
+                © 2024 FluxTransfer. Direct. Secure. Swift.
+            </p>
+<nav class="flex gap-6">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Privacy</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Terms</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Github</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Support</a>
+</nav>
+</div>
+</footer>
+</body></html>
