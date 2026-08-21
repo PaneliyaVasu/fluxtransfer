@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node src/server/signaling-server.js",
     "start": "node src/server/signaling-server.js",
-    "dev:static": "npx serve --no-request-logging src/client"
+    "dev:static": "npx serve --no-request-logging src/client",
+    "build:apk": "node scripts/build-apk.js"
   },
   "keywords": [
     "webrtc",
@@ -16,6 +17,11 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
     "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
   }
 }

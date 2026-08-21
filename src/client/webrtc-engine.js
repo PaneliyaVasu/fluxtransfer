@@ -248,18 +248,12 @@
         if (state === 'connected' || state === 'completed') {
           this._reportConnectionType();
         } else if (state === 'failed') {
-          // Attempt ICE restart first before giving up
-          if (!this._iceRestartAttempted) {
-            this._iceRestartAttempted = true;
-            this.onStatusChange('Direct P2P failed — attempting relay fallback…', 'info');
-            setTimeout(() => this._restartICE(), ICE_RESTART_DELAY_MS);
-          } else {
-            this.onStatusChange('Connection failed — check network or firewall', 'error');
-            this.onError(
-              'WebRTC connection failed after ICE restart. Both direct (STUN) and relayed (TURN) paths failed. Check firewall settings.',
-              'ERR_ICE_FAILED'
-            );
-          }
+          this.onStatusChange('Connection failed — devices must be on the same Wi-Fi network', 'error');
+          this.onError(
+            'Devices are not on the same Wi-Fi network. Both devices must be connected to the same Wi-Fi network to transfer files.',
+            'ERR_NOT_SAME_NETWORK'
+          );
+          this.disconnect();
         } else if (state === 'disconnected') {
           this.onStatusChange('P2P connection interrupted', 'warning');
         }
@@ -287,33 +281,43 @@
     }
 
     /**
-     * Inspect the active ICE candidate pair to report connection type
-     * (direct P2P vs TURN relay). Called after ICE reaches connected/completed.
+     * Inspect the active ICE candidate pair to verify same Wi-Fi / local network connection.
+     * Rejects connections that rely on STUN/TURN across different networks.
      */
     async _reportConnectionType() {
       if (!this.pc) return;
       try {
         const stats = await this.pc.getStats();
-        let usingRelay = false;
         let localType = 'unknown';
+        let remoteType = 'unknown';
+        let isHostPair = false;
+
         stats.forEach((report) => {
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             const local = stats.get(report.localCandidateId);
-            if (local) {
-              localType = local.candidateType || 'unknown';
-              usingRelay = (localType === 'relay');
+            const remote = stats.get(report.remoteCandidateId);
+            if (local) localType = local.candidateType || 'unknown';
+            if (remote) remoteType = remote.candidateType || 'unknown';
+            if (localType === 'host' && remoteType === 'host') {
+              isHostPair = true;
             }
           }
         });
-        if (usingRelay) {
-          this.onStatusChange('WebRTC TURN Relay Connected ⚡ (Encrypted Cloud Relay Mode)', 'success');
-          console.log('%c[WebRTC Engine] ⚡ Connection Mode: WebRTC TURN RELAY (Relayed across internet)', 'color: #f59e0b; font-weight: bold; font-size: 12px;');
-        } else {
-          const detail = localType === 'host' ? 'LAN / Local Network' : 'Direct Internet (STUN)';
-          this.onStatusChange(`WebRTC Direct P2P Connected ⚡ (${detail})`, 'success');
-          console.log(`%c[WebRTC Engine] 🚀 Connection Mode: WebRTC DIRECT P2P (${detail})`, 'color: #10b981; font-weight: bold; font-size: 12px;');
+
+        if (!isHostPair) {
+          console.warn(`[WebRTC Engine] Connection rejected: local candidate=${localType}, remote candidate=${remoteType}. Devices are not on the same Wi-Fi.`);
+          this.onStatusChange('Error: Devices are on different networks.', 'error');
+          this.onError(
+            'Devices are not on the same Wi-Fi network. Both devices must be connected to the same Wi-Fi network to transfer files.',
+            'ERR_NOT_SAME_NETWORK'
+          );
+          this.disconnect();
+          return;
         }
-      } catch (_) {
+
+        this.onStatusChange('WebRTC Direct Same-Network Connected ⚡ (Same Wi-Fi)', 'success');
+        console.log('%c[WebRTC Engine] 🚀 Connection Mode: WebRTC DIRECT SAME-NETWORK (Same Wi-Fi / LAN)', 'color: #10b981; font-weight: bold; font-size: 12px;');
+      } catch (err) {
         this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
         console.log('[WebRTC Engine] Connection Mode: WebRTC DIRECT P2P');
       }

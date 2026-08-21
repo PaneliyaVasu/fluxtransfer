@@ -35,6 +35,7 @@ const MIME = {
   '.woff': 'font/woff',
   '.txt': 'text/plain',
   '.xml': 'text/xml',
+  '.apk': 'application/vnd.android.package-archive',
 };
 
 function serveStatic(req, res) {
@@ -59,8 +60,8 @@ function serveStatic(req, res) {
   }
 
   fs.stat(filePath, (err, stat) => {
-    if (err || !stat.isFile()) {
-      // For unknown paths, serve index.html (client-side routing)
+    if (err) {
+      // For unknown paths, serve root index.html (client-side routing)
       const fallback = path.join(STATIC_DIR, 'index.html');
       fs.readFile(fallback, (e, data) => {
         if (e) { res.writeHead(404); res.end('Not found'); return; }
@@ -70,15 +71,39 @@ function serveStatic(req, res) {
       return;
     }
 
+    if (stat.isDirectory()) {
+      const dirIndex = path.join(filePath, 'index.html');
+      fs.readFile(dirIndex, (e, data) => {
+        if (e) {
+          const fallback = path.join(STATIC_DIR, 'index.html');
+          fs.readFile(fallback, (errFallback, fallbackData) => {
+            if (errFallback) { res.writeHead(404); res.end('Not found'); return; }
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(fallbackData);
+          });
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(data);
+      });
+      return;
+    }
+
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME[ext] || 'application/octet-stream';
 
-    res.writeHead(200, {
+    const headers = {
       'Content-Type': contentType,
+      'Content-Length': stat.size,
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'X-Content-Type-Options': 'nosniff',
-    });
+    };
 
+    if (ext === '.apk') {
+      headers['Content-Disposition'] = 'attachment; filename="FluxTransfer.apk"';
+    }
+
+    res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
   });
 }
