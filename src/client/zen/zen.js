@@ -674,35 +674,27 @@
 
     // ──── NEW ORCHESTRATION METHODS ────
     bindP2PListeners() {
-      if (this.p2pListenersBound) return;
-      const conns = window.peerConnections || [];
-      if (!conns.length) return;
-
-      const primaryConn = conns[0];
-      const dc = primaryConn._dc || primaryConn.dataChannel;
-      if (!dc) return;
-
+      // P2P messaging is now handled via webrtcEngine.onControlMessage
       this.p2pListenersBound = true;
+    }
 
-      const onMessage = (event) => {
-        if (typeof event.data !== 'string') return;
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'zen_game') {
-            this.handleGameMessage(msg);
-          }
-        } catch (e) {}
-      };
-
-      dc.addEventListener('message', onMessage);
-
-      primaryConn.on('close', () => {
-        this.p2pListenersBound = false;
-        this.exitToGameMenu();
-      });
+    hasPeer() {
+      if (window.webrtcEngine && window.webrtcEngine.dataChannel && window.webrtcEngine.dataChannel.readyState === 'open') {
+        return true;
+      }
+      const conns = window.peerConnections || [];
+      return conns.length > 0;
     }
 
     sendGameMessage(data) {
+      if (window.webrtcEngine && typeof window.webrtcEngine.sendControlMessage === 'function') {
+        try {
+          window.webrtcEngine.sendControlMessage(data);
+          return;
+        } catch (err) {
+          console.error('[Flux Zen] Error sending control message via WebRTC engine:', err);
+        }
+      }
       const conns = window.peerConnections || [];
       if (!conns.length) return;
       const primaryConn = conns[0];
@@ -829,8 +821,7 @@
         rps: 'Rock Paper Scissors'
       };
 
-      const conns = window.peerConnections || [];
-      const hasPeer = conns.length > 0;
+      const hasPeer = this.hasPeer();
 
       container.innerHTML = `
         <div class="zen-game-container">
@@ -902,7 +893,10 @@
     }
 
     isSender() {
-      return window.fluxMode === 'send';
+      if (window.webrtcEngine) {
+        return window.webrtcEngine.role === 'initiator' || window.mode === 'send' || window.fluxMode === 'send';
+      }
+      return window.mode === 'send' || window.fluxMode === 'send';
     }
 
     startNewGame(gameId, mode = 'ai', role = null) {

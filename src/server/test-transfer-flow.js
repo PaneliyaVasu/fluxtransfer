@@ -12,6 +12,8 @@
 
 const { WebSocket } = require('ws');
 const { spawn } = require('child_process');
+const { webcrypto } = require('crypto');
+const FluxWebRTCEngine = require('../client/webrtc-engine.js');
 
 async function runTestSuite() {
   console.log('\n==================================================');
@@ -113,54 +115,69 @@ async function runTestSuite() {
     assert(receivedAnswer.answer.sdp === dummyAnswer.sdp, 'SDP Answer correctly relayed to Initiator');
 
 
-    // ── Test 3: Simulated DataChannel Chunk Protocol & Auto-Download Ack ──────
-    console.log('\n📋 Test Group 3: DataChannel Protocol & Completion Acknowledgment');
+    // ── Test 3: Encrypted Chunk Protocol & Completion Ack ────────────────────
+    console.log('\n📋 Test Group 3: Encrypted Chunk Protocol & Completion Ack');
 
-    // Simulate mock sender & receiver buffers
+    const engine = new FluxWebRTCEngine();
+    const sessionCode = '123456';
     const testFileSize = 180 * 1024; // 180 KB
     const chunkSize = 64 * 1024; // 64 KB
     const mockFileBuffer = Buffer.alloc(testFileSize, 'a');
 
-    // Receiver state
-    let receivedBytes = 0;
-    const receivedChunks = [];
-    let senderAckReceived = false;
+    const salt = webcrypto.getRandomValues(new Uint8Array(16));
+    const aesKey = await engine.deriveKey(sessionCode, salt);
+    const fileHash = await engine._computeHash(new Blob([mockFileBuffer]));
 
-    // Sender sends metadata
     const metadata = {
       type: 'metadata',
       name: 'test_document.pdf',
       size: testFileSize,
       mimeType: 'application/pdf',
       chunkSize: chunkSize,
-      totalChunks: Math.ceil(testFileSize / chunkSize)
+      totalChunks: Math.ceil(testFileSize / chunkSize),
+      salt: Buffer.from(salt).toString('base64'),
+      hash: fileHash
     };
 
     assert(metadata.type === 'metadata', 'Metadata frame contains required "type" field');
     assert(metadata.name === 'test_document.pdf', 'Metadata frame contains file name');
     assert(metadata.size === testFileSize, 'Metadata frame contains file size');
+    assert(typeof metadata.salt === 'string', 'Metadata frame contains base64 salt');
+    assert(typeof metadata.hash === 'string', 'Metadata frame contains SHA-256 hash');
 
-    // Simulate sender streaming chunks to receiver
+    // Receiver derives same key
+    const receiverKey = await engine.deriveKey(sessionCode, Buffer.from(metadata.salt, 'base64'));
+
+    // Encrypt & decrypt chunks
+    const receivedChunks = [];
+    let receivedBytes = 0;
+    let chunkIndex = 0;
+
     for (let offset = 0; offset < testFileSize; offset += chunkSize) {
       const slice = mockFileBuffer.subarray(offset, Math.min(offset + chunkSize, testFileSize));
-      receivedChunks.push(slice);
-      receivedBytes += slice.length;
+      const rawChunk = slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength);
+      const encryptedFrame = await engine.encryptChunk(rawChunk, chunkIndex, aesKey);
+
+      const decrypted = await engine.decryptFrame(encryptedFrame.buffer, receiverKey);
+      assert(decrypted.chunkIndex === chunkIndex, `Decrypted chunk index matches expected index ${chunkIndex}`);
+
+      const decryptedBuf = Buffer.from(decrypted.chunkData);
+      receivedChunks.push(decryptedBuf);
+      receivedBytes += decryptedBuf.length;
+      chunkIndex++;
     }
 
     assert(receivedBytes === testFileSize, 'Receiver accumulated 100% of transmitted file bytes');
 
-    // Reassemble Blob/Buffer
+    // Reassemble and verify SHA-256
     const reassembledBuffer = Buffer.concat(receivedChunks);
-    assert(reassembledBuffer.length === testFileSize, 'Reassembled buffer matches original file size');
-    assert(reassembledBuffer.equals(mockFileBuffer), 'Reassembled file byte contents match original source byte-for-byte');
+    assert(reassembledBuffer.equals(mockFileBuffer), 'Reassembled file byte contents match original byte-for-byte');
 
-    // Receiver generates ack-complete message
-    const ackMessage = { type: 'ack-complete' };
-    if (ackMessage.type === 'ack-complete') {
-      senderAckReceived = true;
-    }
+    const computedReceiverHash = await engine._computeHash(new Blob([reassembledBuffer]));
+    assert(computedReceiverHash === fileHash, 'Receiver calculated SHA-256 hash matches sender metadata hash');
 
-    assert(senderAckReceived === true, 'Sender received "ack-complete" confirmation from receiver');
+    const ackMessage = { type: 'ack-complete', hash: computedReceiverHash };
+    assert(ackMessage.type === 'ack-complete', 'Ack-complete message frame correctly structured');
 
 
     // ── Test 4: Transfer Cancel Protocol ──────────────────────────────────────

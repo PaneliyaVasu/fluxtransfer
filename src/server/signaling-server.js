@@ -125,11 +125,33 @@ const server = http.createServer((req, res) => {
   serveStatic(req, res);
 });
 
-// ─── Room Store ───────────────────────────────────────────────────────────────
+// ─── Room Store & Security Configuration ─────────────────────────────────────
 const rooms = new Map(); // Map<roomCode, Set<WebSocket>>
+const roomTimestamps = new Map(); // Map<roomCode, timestamp>
+
+const MAX_MESSAGE_SIZE_BYTES = 16 * 1024; // 16 KB max message payload
+const IP_JOIN_LIMIT_PER_MIN = 30; // Max 30 room joins per IP per minute
+const SOCKET_MSG_LIMIT_PER_MIN = 120; // Max 120 messages per minute per socket
+const ipRateLimits = new Map(); // Map<ip, { count, resetTime }>
+
+function checkIpRateLimit(ip) {
+  const now = Date.now();
+  const entry = ipRateLimits.get(ip) || { count: 0, resetTime: now + 60000 };
+  if (now > entry.resetTime) {
+    entry.count = 1;
+    entry.resetTime = now + 60000;
+  } else {
+    entry.count++;
+  }
+  ipRateLimits.set(ip, entry);
+  return entry.count <= IP_JOIN_LIMIT_PER_MIN;
+}
 
 // ─── WebSocket Server (upgrade on same HTTP server) ───────────────────────────
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({
+  server,
+  maxPayload: MAX_MESSAGE_SIZE_BYTES
+});
 
 function send(ws, data) {
   if (ws.readyState === WebSocket.OPEN) {
@@ -159,7 +181,7 @@ function leaveRoom(ws) {
 
     if (room.size === 0) {
       rooms.delete(roomCode);
-      // No logging for empty room cleanup
+      roomTimestamps.delete(roomCode);
     }
   }
 
@@ -169,72 +191,117 @@ function leaveRoom(ws) {
 wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.roomCode = null;
+  ws.msgCount = 0;
+  ws.msgResetTime = Date.now() + 60000;
+  const clientIp = (req.socket && req.socket.remoteAddress) || '127.0.0.1';
 
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (rawMessage) => {
+    // 1. Message size check
+    if (Buffer.byteLength(rawMessage) > MAX_MESSAGE_SIZE_BYTES) {
+      send(ws, { type: 'error', message: 'Payload size limit exceeded' });
+      return;
+    }
+
+    // 2. Per-socket message rate limit check
+    const now = Date.now();
+    if (now > ws.msgResetTime) {
+      ws.msgCount = 1;
+      ws.msgResetTime = now + 60000;
+    } else {
+      ws.msgCount++;
+      if (ws.msgCount > SOCKET_MSG_LIMIT_PER_MIN) {
+        send(ws, { type: 'error', message: 'Rate limit exceeded. Please slow down.' });
+        return;
+      }
+    }
+
+    // 3. Schema validation & handling
     try {
       const message = JSON.parse(rawMessage.toString());
+      if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
+        send(ws, { type: 'error', message: 'Invalid payload structure' });
+        return;
+      }
+
       const { type, room, offer, answer, candidate } = message;
 
       switch (type) {
         case 'join-room': {
-          if (!room || typeof room !== 'string') {
-            send(ws, { type: 'error', message: 'Invalid room code' });
+          if (!room || typeof room !== 'string' || !/^[a-zA-Z0-9_-]{4,64}$/.test(room.trim())) {
+            send(ws, { type: 'error', message: 'Invalid room code format' });
             return;
           }
 
-          if (ws.roomCode && ws.roomCode !== room) {
+          if (!checkIpRateLimit(clientIp)) {
+            send(ws, { type: 'error', message: 'Too many room connection attempts from this IP' });
+            return;
+          }
+
+          const cleanRoom = room.trim();
+
+          if (ws.roomCode && ws.roomCode !== cleanRoom) {
             leaveRoom(ws);
           }
 
-          if (!rooms.has(room)) {
-            rooms.set(room, new Set());
+          if (!rooms.has(cleanRoom)) {
+            rooms.set(cleanRoom, new Set());
+            roomTimestamps.set(cleanRoom, Date.now());
           }
 
-          const targetRoom = rooms.get(room);
+          const targetRoom = rooms.get(cleanRoom);
 
           if (targetRoom.has(ws)) {
-            send(ws, { type: 'joined', room, role: targetRoom.size === 1 ? 'initiator' : 'joiner' });
+            send(ws, { type: 'joined', room: cleanRoom, role: targetRoom.size === 1 ? 'initiator' : 'joiner' });
             return;
           }
 
           if (targetRoom.size >= 2) {
-            send(ws, { type: 'room-full', room });
+            send(ws, { type: 'room-full', room: cleanRoom });
             return;
           }
 
           targetRoom.add(ws);
-          ws.roomCode = room;
+          ws.roomCode = cleanRoom;
 
           const isInitiator = targetRoom.size === 1;
           send(ws, {
             type: 'joined',
-            room,
+            room: cleanRoom,
             role: isInitiator ? 'initiator' : 'joiner',
             peerPresent: targetRoom.size === 2
           });
 
           if (targetRoom.size === 2) {
-            relayToPeer(room, ws, { type: 'peer-joined' });
+            relayToPeer(cleanRoom, ws, { type: 'peer-joined' });
           }
           break;
         }
 
         case 'offer': {
           if (!ws.roomCode) { send(ws, { type: 'error', message: 'Not in a room' }); return; }
+          if (!offer || typeof offer !== 'object' || typeof offer.sdp !== 'string') {
+            send(ws, { type: 'error', message: 'Invalid offer schema' });
+            return;
+          }
           relayToPeer(ws.roomCode, ws, { type: 'offer', offer });
           break;
         }
 
         case 'answer': {
           if (!ws.roomCode) { send(ws, { type: 'error', message: 'Not in a room' }); return; }
+          if (!answer || typeof answer !== 'object' || typeof answer.sdp !== 'string') {
+            send(ws, { type: 'error', message: 'Invalid answer schema' });
+            return;
+          }
           relayToPeer(ws.roomCode, ws, { type: 'answer', answer });
           break;
         }
 
         case 'ice-candidate': {
           if (!ws.roomCode) return;
+          if (!candidate || typeof candidate !== 'object') return;
           relayToPeer(ws.roomCode, ws, { type: 'ice-candidate', candidate });
           break;
         }
@@ -246,7 +313,7 @@ wss.on('connection', (ws, req) => {
         }
 
         default:
-          send(ws, { type: 'error', message: `Unknown message type: ${type}` });
+          send(ws, { type: 'error', message: `Unknown message type` });
       }
     } catch (err) {
       send(ws, { type: 'error', message: 'Invalid JSON format' });
@@ -257,8 +324,25 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => { leaveRoom(ws); });
 });
 
-// ─── Heartbeat — detect dead connections ─────────────────────────────────────
+// ─── Heartbeat & Stale Room Cleanup ─────────────────────────────────────────
 const pingInterval = setInterval(() => {
+  const now = Date.now();
+
+  // Cleanup inactive rooms (> 15 mins)
+  roomTimestamps.forEach((createdTime, roomCode) => {
+    if (now - createdTime > 15 * 60 * 1000) {
+      const room = rooms.get(roomCode);
+      if (room) {
+        room.forEach(client => {
+          send(client, { type: 'error', message: 'Room session expired' });
+          leaveRoom(client);
+        });
+      }
+      rooms.delete(roomCode);
+      roomTimestamps.delete(roomCode);
+    }
+  });
+
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
       leaveRoom(ws);
@@ -277,3 +361,4 @@ server.listen(PORT, () => {
   console.log(`📡 WebSocket signaling at ws://localhost:${PORT}`);
   console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
 });
+

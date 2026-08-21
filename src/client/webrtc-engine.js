@@ -1,36 +1,32 @@
 /**
- * FluxTransfer — Client-Side WebRTC File Transfer Engine
+ * FluxTransfer — Canonical Client-Side WebRTC File Transfer Engine
  * 
  * Features:
  * - Native WebRTC RTCPeerConnection & RTCDataChannel
  * - WebSocket Signaling client for room pairing & SDP/ICE exchange
- * - File chunking (64KB) with backpressure management (bufferedAmount)
- * - Transfer progress, speed calculation, and completion Blob construction
- * - Robust error handling (ICE failure, signaling timeout, peer disconnect)
- * - Configurable STUN & TURN server support
+ * - Application-level E2EE (AES-256-GCM via Web Crypto API, derived using PBKDF2 with 100k iterations)
+ * - Unique 12-byte random IV/nonce per encrypted chunk
+ * - Zero-RAM OPFS streaming storage on receiver side (with RAM chunk fallback for legacy environments)
+ * - Off-main-thread SHA-256 file integrity calculation & verification via hash-worker.js
+ * - Event-driven, non-bypassing backpressure management
+ * - Deterministic transfer state machine (idle, connecting, connected, transferring, completed, failed, cancelled)
+ * - Application-level P2P control messaging interface (for Flux Zen multiplayer)
+ * - Zero logging of secrets, keys, PINs, or plaintext data
  */
 
 (function (global) {
   'use strict';
 
-  const DEFAULT_CHUNK_SIZE = 128 * 1024; // 128 KB (Zero-copy raw ArrayBuffer chunk size)
+  const DEFAULT_CHUNK_SIZE = 64 * 1024; // 64 KB chunk size for WebRTC DataChannel frames
   const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB high watermark
   const BUFFER_LOW_WATERMARK = 1 * 1024 * 1024;  // 1 MB low watermark
-  const ICE_RESTART_DELAY_MS = 2000;  // wait before restarting ICE
+  const PBKDF2_ITERATIONS = 100000;
 
-  // ─── ICE Server Configuration ─────────────────────────────────────────────
-  // STUN: discovers public IP (works ~60-80% of NAT types)
-  // TURN: relays traffic when STUN punch-through fails (symmetric NAT, CGNAT,
-  //       mobile carriers, corporate firewalls). Required for cross-network.
   const DEFAULT_ICE_SERVERS = [
-    // Google STUN (no auth needed, widely available)
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    // Open Relay (metered.ca) — free STUN
     { urls: 'stun:openrelay.metered.ca:80' },
-    // Open Relay (metered.ca) — free TURN (no account required)
-    // Covers port 80 (HTTP-friendly, firewall bypass) and 443 (HTTPS/TLS)
     {
       urls: 'turn:openrelay.metered.ca:80',
       username: 'openrelayproject',
@@ -51,40 +47,71 @@
       username: 'openrelayproject',
       credential: 'openrelayproject'
     },
-    // Cloudflare STUN (highly reliable, global)
-    { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: 'stun:stun.cloudflare.com:3478' }
   ];
+
+  function getCrypto() {
+    if (typeof self !== 'undefined' && self.crypto && self.crypto.subtle) {
+      return self.crypto;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+      return globalThis.crypto;
+    }
+    if (typeof require !== 'undefined') {
+      try {
+        const nodeCrypto = require('crypto');
+        if (nodeCrypto.webcrypto && nodeCrypto.webcrypto.subtle) {
+          return nodeCrypto.webcrypto;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function bytesToBase64(bytes) {
+    let binary = '';
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const block = 0x8000;
+    for (let i = 0; i < view.length; i += block) {
+      binary += String.fromCharCode(...view.subarray(i, i + block));
+    }
+    return btoa(binary);
+  }
+
+  function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  }
 
   class FluxWebRTCEngine {
     /**
      * @param {Object} config
-     * @param {string} config.signalingUrl - WebSocket signaling server URL (e.g. 'ws://localhost:8080')
-     * @param {Array<RTCIceServer>} [config.iceServers] - Custom STUN/TURN servers
+     * @param {string} [config.signalingUrl]
+     * @param {Array<RTCIceServer>} [config.iceServers]
      * @param {Function} [config.onStatusChange] - (statusText, statusType) => void
      * @param {Function} [config.onProgress] - ({ percent, transferredBytes, totalBytes, speedBps, role }) => void
      * @param {Function} [config.onFileMetadata] - (metadata) => void
-     * @param {Function} [config.onFileComplete] - (blob, metadata) => void
+     * @param {Function} [config.onFileComplete] - (fileObj, metadata) => void
      * @param {Function} [config.onError] - (errorMessage, errorCode) => void
-     * @param {Function} [config.onPeerJoined] - () => void  (signaling: peer entered room)
-     * @param {Function} [config.onDataChannelOpen] - () => void  (P2P channel ready — safe to sendFile)
+     * @param {Function} [config.onPeerJoined] - () => void
+     * @param {Function} [config.onDataChannelOpen] - () => void
      * @param {Function} [config.onPeerLeft] - () => void
+     * @param {Function} [config.onControlMessage] - (msgObj) => void (Application-level messages e.g. Flux Zen)
      */
     constructor(config = {}) {
-      // Smart signaling URL detection:
-      // - HTTPS deployment: WebSocket on same host (wss://yoursite.com)
-      // - Local dev (npm start): unified server on same port
-      // - Local dev (npm run dev with separate static serve): fallback to :8080
       let defaultSignalingUrl;
-      if (window.location.protocol === 'https:') {
-        // Production HTTPS: WebSocket on same host (wss://yoursite.com)
-        defaultSignalingUrl = `wss://${window.location.host}`;
+      if (typeof window !== 'undefined' && window.location) {
+        if (window.location.protocol === 'https:') {
+          defaultSignalingUrl = `wss://${window.location.host}`;
+        } else {
+          defaultSignalingUrl = `ws://${window.location.hostname}:8080`;
+        }
       } else {
-        // Local dev (localhost or LAN IP like 192.168.x.x):
-        // Always connect to the unified signaling server on port 8080.
-        // Run it with: npm start  (node src/server/signaling-server.js)
-        // Do NOT use `npm run dev` alone — that only serves static files (no WebSocket).
-        defaultSignalingUrl = `ws://${window.location.hostname}:8080`;
+        defaultSignalingUrl = 'ws://localhost:8080';
       }
+
       this.signalingUrl = config.signalingUrl || defaultSignalingUrl;
       this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
 
@@ -97,51 +124,229 @@
       this.onPeerJoined = config.onPeerJoined || (() => {});
       this.onDataChannelOpen = config.onDataChannelOpen || (() => {});
       this.onPeerLeft = config.onPeerLeft || (() => {});
+      this.onControlMessage = config.onControlMessage || (() => {});
 
-      // Internal State
+      // Connections & State
       this.ws = null;
       this.pc = null;
-      this.dataChannels = [];
       this.dataChannel = null;
       this.roomCode = null;
+      this.sessionCode = null;
       this.role = null; // 'initiator' | 'joiner'
       this.isTransferring = false;
       this.pendingIceCandidates = [];
-      this._hasFiredOpen = false;
 
-      // Receiver state
+      // Deterministic Transfer State Tracking
+      this.transferState = 'idle'; // 'idle'|'connecting'|'connected'|'transferring'|'completed'|'cancelled'|'failed'
+      this.transferId = null;
+
+      // Encryption Key & Salt
+      this.aesKey = null;
+      this.salt = null;
+
+      // Receiver state & OPFS worker
       this.incomingMeta = null;
-      this.receivedChunks = [];
+      this.receivedChunksCount = 0;
       this.receivedBytes = 0;
-      this.transferStartTime = 0;
+      this.memoryChunks = null;
+      this.opfsWorker = null;
+      this.opfsActive = false;
+      this.finishStarted = false;
 
-      // Performance & Rolling Speed state
+      // Speed & UI state
+      this.transferStartTime = 0;
       this.lastProgressTime = 0;
       this.lastProgressBytes = 0;
       this.currentSpeedBps = 0;
 
       // Sender state
       this.currentFile = null;
-      this.isPausedForBackpressure = false;
+    }
+
+    _setState(state, extraInfo = {}) {
+      this.transferState = state;
+      console.log(`[WebRTC Engine] State transition -> ${state}`);
     }
 
     /**
-     * Connect to signaling server and join a room
-     * @param {string} roomCode 
+     * Derive AES-256-GCM Key from Session Code / PIN and Salt using PBKDF2
      */
-    connect(roomCode) {
+    async deriveKey(sessionCode, salt) {
+      const cryptoObj = getCrypto();
+      if (!cryptoObj || !cryptoObj.subtle) {
+        throw new Error('Web Crypto API is unavailable in this environment');
+      }
+      const cleanCode = String(sessionCode || '').trim();
+      if (!cleanCode) throw new Error('Missing session code for key derivation');
+
+      const keyMaterial = await cryptoObj.subtle.importKey(
+        'raw',
+        new TextEncoder().encode(cleanCode),
+        'PBKDF2',
+        false,
+        ['deriveKey']
+      );
+
+      return await cryptoObj.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: salt,
+          iterations: PBKDF2_ITERATIONS,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+    }
+
+    /**
+     * Encrypt a chunk ArrayBuffer with AES-256-GCM using a fresh unique 12-byte IV
+     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext + Tag]
+     */
+    async encryptChunk(chunkBuffer, chunkIndex, aesKey) {
+      const cryptoObj = getCrypto();
+      const iv = cryptoObj.getRandomValues(new Uint8Array(12));
+      const encrypted = await cryptoObj.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        aesKey,
+        chunkBuffer
+      );
+
+      const frame = new Uint8Array(4 + 12 + encrypted.byteLength);
+      const view = new DataView(frame.buffer);
+      view.setUint32(0, chunkIndex, false);
+      frame.set(iv, 4);
+      frame.set(new Uint8Array(encrypted), 16);
+      return frame;
+    }
+
+    /**
+     * Decrypt a chunk frame buffer with AES-256-GCM using derived key and chunk IV
+     */
+    async decryptFrame(frameBuffer, aesKey) {
+      const cryptoObj = getCrypto();
+      const buffer = frameBuffer instanceof ArrayBuffer
+        ? frameBuffer
+        : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
+
+      if (buffer.byteLength < 32) {
+        throw new Error('Invalid transfer frame: undersized payload');
+      }
+
+      const view = new DataView(buffer);
+      const chunkIndex = view.getUint32(0, false);
+      const iv = new Uint8Array(buffer, 4, 12);
+      const encryptedPayload = buffer.slice(16);
+
+      const decrypted = await cryptoObj.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv },
+        aesKey,
+        encryptedPayload
+      );
+
+      return { chunkIndex, chunkData: decrypted };
+    }
+
+    /**
+     * Off-main-thread SHA-256 file hashing via hash-worker.js (or SubtleCrypto fallback)
+     */
+    async _computeHash(payload) {
+      if (typeof Worker !== 'undefined') {
+        try {
+          return await new Promise((resolve, reject) => {
+            const worker = new Worker('/hash-worker.js');
+            const id = Math.random().toString(36).slice(2);
+            let totalSize = 0;
+            if (payload instanceof Blob) {
+              totalSize = payload.size;
+            } else if (Array.isArray(payload)) {
+              for (let c of payload) {
+                if (c) totalSize += (c.byteLength || 0);
+              }
+            }
+            const timeoutDuration = Math.max(180000, (totalSize / (1024 * 1024)) * 3000);
+            const timer = setTimeout(() => {
+              worker.terminate();
+              reject(new Error('SHA-256 calculation timed out'));
+            }, timeoutDuration);
+
+            worker.onmessage = (event) => {
+              if (event.data && event.data.id === id) {
+                clearTimeout(timer);
+                worker.terminate();
+                if (event.data.status === 'success') resolve(event.data.hash);
+                else reject(new Error(event.data.error || 'Hashing failed'));
+              }
+            };
+            worker.onerror = (err) => {
+              clearTimeout(timer);
+              worker.terminate();
+              reject(new Error(err.message || 'Hash worker failed'));
+            };
+
+            if (payload instanceof Blob) worker.postMessage({ id, file: payload });
+            else worker.postMessage({ id, chunks: payload });
+          });
+        } catch (workerErr) {
+          console.warn('[WebRTC Engine] Hash worker unavailable, falling back:', workerErr);
+        }
+      }
+
+      return await this._canonicalHashFallback(payload);
+    }
+
+    async _canonicalHashFallback(fileOrChunks) {
+      const cryptoObj = getCrypto();
+      if (!cryptoObj || !cryptoObj.subtle) throw new Error('Crypto unavailable for hashing');
+
+      if (fileOrChunks instanceof Blob) {
+        const arrayBuf = await fileOrChunks.arrayBuffer();
+        const digest = await cryptoObj.subtle.digest('SHA-256', arrayBuf);
+        return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      if (Array.isArray(fileOrChunks)) {
+        let totalLen = 0;
+        for (let c of fileOrChunks) if (c) totalLen += c.byteLength || 0;
+        const combined = new Uint8Array(totalLen);
+        let pos = 0;
+        for (let c of fileOrChunks) {
+          if (!c) continue;
+          const arr = ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : new Uint8Array(c);
+          combined.set(arr, pos);
+          pos += arr.byteLength;
+        }
+        const digest = await cryptoObj.subtle.digest('SHA-256', combined.buffer);
+        return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      throw new Error('Unsupported payload for hash fallback');
+    }
+
+    /**
+     * Connect to WebSocket signaling server and join room
+     * @param {string} roomCode 
+     * @param {string} [sessionCode] - Pairing PIN used for key derivation
+     */
+    connect(roomCode, sessionCode = null) {
       if (!roomCode) {
         this.onError('Room code is required', 'ERR_INVALID_ROOM');
         return;
       }
 
-      this.disconnect(); // Clean up existing session if any
-      this.roomCode = roomCode;
+      this.disconnect();
+      this.roomCode = String(roomCode).trim();
+      this.sessionCode = sessionCode ? String(sessionCode).trim() : this.roomCode;
+      this._setState('connecting');
       this.onStatusChange('Connecting to signaling server…', 'info');
 
       try {
-        this.ws = new WebSocket(this.signalingUrl);
+        const WebSocketImpl = typeof window !== 'undefined' ? window.WebSocket : require('ws');
+        this.ws = new WebSocketImpl(this.signalingUrl);
       } catch (err) {
+        this._setState('failed');
         this.onError(`Failed to connect to signaling server: ${err.message}`, 'ERR_WS_CONNECT');
         return;
       }
@@ -156,14 +361,14 @@
           const msg = JSON.parse(event.data);
           this._handleSignalingMessage(msg);
         } catch (e) {
-          console.error('[WebRTC Engine] Bad signaling message', e);
+          console.error('[WebRTC Engine] Bad signaling message');
         }
       };
 
-      this.ws.onerror = (err) => {
-        console.error('[WebRTC Engine] WebSocket error', err);
+      this.ws.onerror = () => {
+        this._setState('failed');
         this.onStatusChange('Signaling server connection error', 'error');
-        this.onError('WebSocket connection to signaling server failed. Is the server running?', 'ERR_WS_ERROR');
+        this.onError('WebSocket connection to signaling server failed.', 'ERR_WS_ERROR');
       };
 
       this.ws.onclose = () => {
@@ -171,27 +376,20 @@
       };
     }
 
-    /**
-     * Internal Signaling Message Router
-     */
     _handleSignalingMessage(msg) {
       switch (msg.type) {
         case 'joined':
           this.role = msg.role;
-          this.onStatusChange(`Room ${msg.room} joined. Waiting for peer…`, 'info');
-          if (msg.peerPresent) {
+          this.onStatusChange(`Room joined. Waiting for peer…`, 'info');
+          if (msg.peerPresent && this.role === 'initiator') {
             this.onPeerJoined();
-            // Only the INITIATOR creates an offer. The joiner waits for the offer.
-            if (this.role === 'initiator') {
-              this._initiatePeerConnection();
-            }
+            this._initiatePeerConnection();
           }
           break;
 
         case 'peer-joined':
-          this.onStatusChange('Peer connected! Negotiating P2P WebRTC link…', 'info');
+          this.onStatusChange('Peer connected! Negotiating P2P link…', 'info');
           this.onPeerJoined();
-          // Only the INITIATOR creates the offer — joiner waits and responds.
           if (this.role === 'initiator') {
             this._initiatePeerConnection();
           }
@@ -217,7 +415,7 @@
 
         case 'room-full':
           this.onStatusChange('Room is full (Maximum 2 peers)', 'error');
-          this.onError(`Room "${msg.room}" is full. Please try another room code.`, 'ERR_ROOM_FULL');
+          this.onError(`Room is full. Please try another code.`, 'ERR_ROOM_FULL');
           this.disconnect();
           break;
 
@@ -227,52 +425,48 @@
       }
     }
 
-    /**
-     * Create RTCPeerConnection with STUN/TURN servers
-     */
     _createPeerConnection() {
       const pcConfig = {
         iceServers: this.iceServers,
         iceCandidatePoolSize: 2
       };
 
-      this.pc = new RTCPeerConnection(pcConfig);
+      let RTCPeerConnectionImpl;
+      if (typeof window !== 'undefined' && (window.RTCPeerConnection || window.webkitRTCPeerConnection)) {
+        RTCPeerConnectionImpl = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+      } else {
+        try {
+          RTCPeerConnectionImpl = require('@koush/wrtc').RTCPeerConnection || require('wrtc').RTCPeerConnection;
+        } catch (_) {
+          throw new Error('RTCPeerConnection is unavailable in this environment');
+        }
+      }
 
-      // Relay ICE candidates to peer via signaling server — now moved inside _createPeerConnection body
+      this.pc = new RTCPeerConnectionImpl(pcConfig);
 
-      // Handle ICE Connection State changes
       this.pc.oniceconnectionstatechange = () => {
         const state = this.pc.iceConnectionState;
         console.log(`[WebRTC Engine] ICE State: ${state}`);
 
         if (state === 'connected' || state === 'completed') {
+          this._setState('connected');
           this._reportConnectionType();
         } else if (state === 'failed') {
-          this.onStatusChange('Connection failed — devices must be on the same Wi-Fi network', 'error');
-          this.onError(
-            'Devices are not on the same Wi-Fi network. Both devices must be connected to the same Wi-Fi network to transfer files.',
-            'ERR_NOT_SAME_NETWORK'
-          );
+          this._setState('failed');
+          this.onStatusChange('P2P connection failed', 'error');
+          this.onError('WebRTC P2P connection failed.', 'ERR_ICE_FAILED');
           this.disconnect();
         } else if (state === 'disconnected') {
           this.onStatusChange('P2P connection interrupted', 'warning');
         }
       };
 
-      // Track ICE candidate types gathered (host/srflx/relay)
-      this.pc.onicegatheringstatechange = () => {
-        console.log(`[WebRTC Engine] ICE Gathering: ${this.pc.iceGatheringState}`);
-      };
-
       this.pc.onicecandidate = (event) => {
         if (event.candidate) {
-          const type = event.candidate.type || '';
-          console.log(`[WebRTC Engine] ICE Candidate gathered: ${type} — ${event.candidate.address || event.candidate.candidate}`);
           this._sendSignaling({ type: 'ice-candidate', candidate: event.candidate });
         }
       };
 
-      // Receiver listens for incoming DataChannel
       this.pc.ondatachannel = (event) => {
         console.log('[WebRTC Engine] Received remote DataChannel');
         this.dataChannel = event.channel;
@@ -280,131 +474,37 @@
       };
     }
 
-    /**
-     * Inspect the active ICE candidate pair to verify same Wi-Fi / local network connection.
-     * Rejects connections that rely on STUN/TURN across different networks.
-     */
     async _reportConnectionType() {
-      if (!this.pc) return;
+      if (!this.pc || typeof this.pc.getStats !== 'function') {
+        this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+        return;
+      }
       try {
         const stats = await this.pc.getStats();
-        let localType = 'unknown';
-        let remoteType = 'unknown';
         let isHostPair = false;
-
         stats.forEach((report) => {
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             const local = stats.get(report.localCandidateId);
             const remote = stats.get(report.remoteCandidateId);
-            if (local) localType = local.candidateType || 'unknown';
-            if (remote) remoteType = remote.candidateType || 'unknown';
-            if (localType === 'host' && remoteType === 'host') {
+            if (local && remote && local.candidateType === 'host' && remote.candidateType === 'host') {
               isHostPair = true;
             }
           }
         });
-
-        if (!isHostPair) {
-          console.warn(`[WebRTC Engine] Connection rejected: local candidate=${localType}, remote candidate=${remoteType}. Devices are not on the same Wi-Fi.`);
-          this.onStatusChange('Error: Devices are on different networks.', 'error');
-          this.onError(
-            'Devices are not on the same Wi-Fi network. Both devices must be connected to the same Wi-Fi network to transfer files.',
-            'ERR_NOT_SAME_NETWORK'
-          );
-          this.disconnect();
-          return;
+        if (isHostPair) {
+          this.onStatusChange('WebRTC Direct Same-Network Connected ⚡ (LAN)', 'success');
+        } else {
+          this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
         }
-
-        this.onStatusChange('WebRTC Direct Same-Network Connected ⚡ (Same Wi-Fi)', 'success');
-        console.log('%c[WebRTC Engine] 🚀 Connection Mode: WebRTC DIRECT SAME-NETWORK (Same Wi-Fi / LAN)', 'color: #10b981; font-weight: bold; font-size: 12px;');
-      } catch (err) {
+      } catch (_) {
         this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
-        console.log('[WebRTC Engine] Connection Mode: WebRTC DIRECT P2P');
       }
     }
 
-    /**
-     * ICE Restart — retry ICE negotiation with relay-only (TURN) policy.
-     * Called automatically on first ICE failure.
-     */
-    async _restartICE() {
-      if (!this.pc || this.pc.connectionState === 'closed') return;
-      console.log('[WebRTC Engine] Attempting ICE restart with relay-only policy…');
-
-      const pcConfig = {
-        iceServers: this.iceServers,
-        iceTransportPolicy: 'relay', // Force TURN relay — bypasses symmetric NAT
-        iceCandidatePoolSize: 4
-      };
-
-      try {
-        this.pc.close();
-        this.pc = new RTCPeerConnection(pcConfig);
-
-        // Re-bind all handlers on new PC
-        this.pc.oniceconnectionstatechange = this._createICEStateHandler();
-        this.pc.onicegatheringstatechange = () => {
-          console.log(`[WebRTC Engine] ICE Gathering (restart): ${this.pc.iceGatheringState}`);
-        };
-        this.pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            this._sendSignaling({ type: 'ice-candidate', candidate: event.candidate });
-          }
-        };
-        this.pc.ondatachannel = (event) => {
-          this.dataChannel = event.channel;
-          this._setupDataChannelEvents();
-        };
-
-        if (this.role === 'initiator') {
-          this.dataChannel = this.pc.createDataChannel('flux-file-channel', { ordered: true });
-          this._setupDataChannelEvents();
-          const offer = await this.pc.createOffer({ iceRestart: true });
-          await this.pc.setLocalDescription(offer);
-          this._sendSignaling({ type: 'offer', offer: this.pc.localDescription });
-        }
-      } catch (err) {
-        console.error('[WebRTC Engine] ICE restart failed:', err);
-        this.onError('Relay fallback failed: ' + err.message, 'ERR_ICE_RESTART');
-      }
-    }
-
-    /**
-     * Build an ICE state change handler for use after restart.
-     * Does not attempt another restart (prevents infinite loop).
-     */
-    _createICEStateHandler() {
-      return () => {
-        const state = this.pc && this.pc.iceConnectionState;
-        console.log(`[WebRTC Engine] ICE State (after restart): ${state}`);
-        if (state === 'connected' || state === 'completed') {
-          this._reportConnectionType();
-        } else if (state === 'failed') {
-          this.onStatusChange('All connection paths failed', 'error');
-          this.onError(
-            'Connection failed: Both direct P2P (STUN) and relayed (TURN) paths failed. Try a different network or check firewall.',
-            'ERR_ICE_FINAL_FAIL'
-          );
-        } else if (state === 'disconnected') {
-          this.onStatusChange('P2P connection interrupted', 'warning');
-        }
-      };
-    }
-
-    /**
-     * Initiator starts offer negotiation
-     */
     async _initiatePeerConnection() {
-      // Guard: don't create a new connection if one is already in progress
-      if (this.pc && this.pc.signalingState !== 'closed') {
-        console.warn('[WebRTC Engine] _initiatePeerConnection called but PC already exists — ignoring duplicate.');
-        return;
-      }
+      if (this.pc && this.pc.signalingState !== 'closed') return;
 
       this._createPeerConnection();
-      this._iceRestartAttempted = false;
-
-      // Only the initiator creates the DataChannel
       this.dataChannel = this.pc.createDataChannel('flux-file-channel', { ordered: true });
       this._setupDataChannelEvents();
 
@@ -417,22 +517,20 @@
       }
     }
 
-    /**
-     * Handle incoming SDP Offer (Receiver)
-     */
     async _handleOffer(offer) {
-      // Only accept an offer when we haven't set a remote description yet
-      if (this.pc && this.pc.signalingState !== 'stable' && this.pc.signalingState !== 'closed') {
-        console.warn(`[WebRTC Engine] _handleOffer ignored — bad signalingState: ${this.pc.signalingState}`);
-        return;
-      }
-
-      if (!this.pc) {
-        this._createPeerConnection();
-      }
+      if (this.pc && this.pc.signalingState !== 'stable' && this.pc.signalingState !== 'closed') return;
+      if (!this.pc) this._createPeerConnection();
 
       try {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(offer));
+        let RTCSessionDescriptionImpl;
+        if (typeof window !== 'undefined' && window.RTCSessionDescription) {
+          RTCSessionDescriptionImpl = window.RTCSessionDescription;
+        } else {
+          const wrtc = require('@koush/wrtc') || require('wrtc');
+          RTCSessionDescriptionImpl = wrtc.RTCSessionDescription;
+        }
+
+        await this.pc.setRemoteDescription(new RTCSessionDescriptionImpl(offer));
         this._flushPendingIceCandidates();
 
         const answer = await this.pc.createAnswer();
@@ -443,37 +541,37 @@
       }
     }
 
-    /**
-     * Handle incoming SDP Answer (Initiator)
-     */
     async _handleAnswer(answer) {
-      if (!this.pc) return;
-      // Only accept an answer when we're waiting for one (have-local-offer state)
-      if (this.pc.signalingState !== 'have-local-offer') {
-        console.warn(`[WebRTC Engine] _handleAnswer ignored — bad signalingState: ${this.pc.signalingState}`);
-        return;
-      }
+      if (!this.pc || this.pc.signalingState !== 'have-local-offer') return;
       try {
-        await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
+        let RTCSessionDescriptionImpl;
+        if (typeof window !== 'undefined' && window.RTCSessionDescription) {
+          RTCSessionDescriptionImpl = window.RTCSessionDescription;
+        } else {
+          const wrtc = require('@koush/wrtc') || require('wrtc');
+          RTCSessionDescriptionImpl = wrtc.RTCSessionDescription;
+        }
+
+        await this.pc.setRemoteDescription(new RTCSessionDescriptionImpl(answer));
         this._flushPendingIceCandidates();
       } catch (err) {
         this.onError(`Failed to set SDP answer: ${err.message}`, 'ERR_HANDLE_ANSWER');
       }
     }
 
-    /**
-     * Handle trickled Remote ICE candidate
-     */
     async _handleRemoteIceCandidate(candidate) {
       if (!candidate) return;
-      const rtcCandidate = new RTCIceCandidate(candidate);
+      let RTCIceCandidateImpl;
+      if (typeof window !== 'undefined' && window.RTCIceCandidate) {
+        RTCIceCandidateImpl = window.RTCIceCandidate;
+      } else {
+        const wrtc = require('@koush/wrtc') || require('wrtc');
+        RTCIceCandidateImpl = wrtc.RTCIceCandidate;
+      }
 
+      const rtcCandidate = new RTCIceCandidateImpl(candidate);
       if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
-        try {
-          await this.pc.addIceCandidate(rtcCandidate);
-        } catch (e) {
-          console.error('[WebRTC Engine] Error adding ICE candidate', e);
-        }
+        try { await this.pc.addIceCandidate(rtcCandidate); } catch (e) {}
       } else {
         this.pendingIceCandidates.push(rtcCandidate);
       }
@@ -482,13 +580,10 @@
     _flushPendingIceCandidates() {
       while (this.pendingIceCandidates.length > 0) {
         const candidate = this.pendingIceCandidates.shift();
-        this.pc.addIceCandidate(candidate).catch((e) => console.error(e));
+        this.pc.addIceCandidate(candidate).catch(() => {});
       }
     }
 
-    /**
-     * Configure DataChannel events and backpressure thresholds
-     */
     _setupDataChannelEvents() {
       if (!this.dataChannel) return;
 
@@ -497,7 +592,8 @@
 
       this.dataChannel.onopen = () => {
         console.log('[WebRTC Engine] DataChannel OPEN');
-        this.onStatusChange('P2P DataChannel open. Ready for file transfer! ⚡', 'success');
+        this._setState('connected');
+        this.onStatusChange('P2P DataChannel open. Encrypted link ready! ⚡', 'success');
         this.onDataChannelOpen();
       };
 
@@ -518,28 +614,72 @@
     }
 
     /**
-     * Route incoming DataChannel frames (Metadata text vs Binary file chunks)
+     * Handle incoming DataChannel messages (Control JSON vs Binary Encrypted Frames)
      */
-    _handleDataChannelMessage(data) {
+    async _handleDataChannelMessage(data) {
       if (typeof data === 'string') {
         try {
           const msg = JSON.parse(data);
 
           if (msg.type === 'metadata') {
             this.incomingMeta = msg;
-            this.receivedChunks = [];
+            this.salt = base64ToBytes(msg.salt);
+            this.receivedChunksCount = 0;
             this.receivedBytes = 0;
             this.transferStartTime = Date.now();
             this.isTransferring = true;
+            this.finishStarted = false;
+            this._setState('transferring');
+
+            // Derive AES key for decryption
+            try {
+              this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+            } catch (keyErr) {
+              this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+              return;
+            }
+
+            // Init Receiver Streaming Storage (OPFS worker with memory chunk fallback)
+            const isOpfsSupported = typeof Worker !== 'undefined'
+              && typeof navigator !== 'undefined'
+              && navigator.storage
+              && typeof navigator.storage.getDirectory === 'function';
+
+            this.opfsActive = false;
+            this.memoryChunks = null;
+
+            if (isOpfsSupported) {
+              try {
+                this.opfsWorker = new Worker('/opfs-writer-worker.js');
+                await this._postOpfsWorkerCmd('init', {
+                  name: msg.name,
+                  size: msg.size,
+                  mime: msg.mimeType
+                });
+                this.opfsActive = true;
+              } catch (opfsErr) {
+                console.warn('[WebRTC Engine] OPFS writer initialization failed, using RAM chunk fallback:', opfsErr);
+                this.opfsActive = false;
+                if (this.opfsWorker) {
+                  try { this.opfsWorker.terminate(); } catch (_) {}
+                  this.opfsWorker = null;
+                }
+              }
+            }
+
+            if (!this.opfsActive) {
+              this.memoryChunks = new Array(msg.totalChunks);
+            }
 
             this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
             this.onFileMetadata(msg);
+
           } else if (msg.type === 'ack-complete') {
-            // Guard: ensure ack-complete is processed only ONCE per transfer on Sender side
             if (this.currentFile || this.isTransferring) {
               const file = this.currentFile;
               this.currentFile = null;
               this.isTransferring = false;
+              this._setState('completed');
               this.onStatusChange('File transfer verified and acknowledged by receiver! 🎉', 'success');
               const meta = {
                 name: file ? file.name : 'File',
@@ -549,28 +689,68 @@
               this.onFileComplete(null, meta);
             }
           } else if (msg.type === 'cancel') {
+            this._cleanupReceiverStorage(true);
             this.isTransferring = false;
+            this._setState('cancelled');
             this.onStatusChange('Transfer cancelled by peer.', 'warning');
             this.onError('Peer cancelled the file transfer.', 'ERR_TRANSFER_CANCELLED');
+          } else if (msg.type === 'zen_game') {
+            // Application-level control message passed to registered handler
+            this.onControlMessage(msg);
           }
         } catch (e) {
-          console.error('[WebRTC Engine] Failed parsing text frame', e);
+          console.error('[WebRTC Engine] Failed parsing text frame');
         }
       } else if (data instanceof ArrayBuffer) {
-        // Binary Chunk Frame (Zero-copy raw ArrayBuffer)
-        if (!this.incomingMeta) {
-          console.warn('[WebRTC Engine] Received chunk before metadata header');
+        // Binary Chunk Frame -> [ChunkIndex (4B)][IV (12B)][Ciphertext + Tag]
+        if (!this.incomingMeta || !this.aesKey) {
+          console.warn('[WebRTC Engine] Received chunk frame before metadata key setup');
           return;
         }
 
-        this.receivedChunks.push(data);
-        this.receivedBytes += data.byteLength;
+        let decryptedObj;
+        try {
+          decryptedObj = await this.decryptFrame(data, this.aesKey);
+        } catch (decryptErr) {
+          this._handleTransferFailure(`Decryption failed — authentication or key mismatch: ${decryptErr.message}`, 'ERR_DECRYPT_FAILED');
+          return;
+        }
 
-        const totalBytes = this.incomingMeta.size;
+        const { chunkIndex, chunkData } = decryptedObj;
+        const meta = this.incomingMeta;
+
+        if (chunkIndex < 0 || chunkIndex >= meta.totalChunks) {
+          this._handleTransferFailure('Invalid chunk index received', 'ERR_INVALID_CHUNK_INDEX');
+          return;
+        }
+
+        // Store chunk via OPFS worker or memory fallback
+        let storedInOpfs = false;
+        if (this.opfsActive) {
+          try {
+            await this._postOpfsWorkerCmd('write', {
+              position: chunkIndex * meta.chunkSize,
+              data: chunkData
+            });
+            storedInOpfs = true;
+          } catch (writeErr) {
+            console.error('[WebRTC Engine] OPFS write failed, falling back to RAM:', writeErr);
+            this.opfsActive = false;
+          }
+        }
+
+        if (!storedInOpfs) {
+          if (!this.memoryChunks) this.memoryChunks = new Array(meta.totalChunks);
+          this.memoryChunks[chunkIndex] = chunkData;
+        }
+
+        this.receivedChunksCount += 1;
+        this.receivedBytes += chunkData.byteLength;
+
+        const totalBytes = meta.size;
         const now = Date.now();
         const timeDiff = (now - this.lastProgressTime) / 1000;
 
-        // Calculate instant rolling speed every ~500ms
         if (timeDiff >= 0.5 || this.lastProgressTime === 0) {
           const bytesDiff = this.receivedBytes - this.lastProgressBytes;
           this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
@@ -578,9 +758,8 @@
           this.lastProgressBytes = this.receivedBytes;
         }
 
-        // Throttle UI updates to max once per 100ms (or on final 100% completion)
-        const isComplete = this.receivedBytes >= totalBytes;
-        if (isComplete || (now - (this._lastRecvUiUpdate || 0)) > 100) {
+        const isAllChunksReceived = this.receivedChunksCount >= meta.totalChunks;
+        if (isAllChunksReceived || (now - (this._lastRecvUiUpdate || 0)) > 100) {
           this._lastRecvUiUpdate = now;
           const percent = Math.min(100, (this.receivedBytes / totalBytes) * 100);
           this.onProgress({
@@ -592,28 +771,113 @@
           });
         }
 
-        // Reassembly on complete (Guard: process completion exactly once per file)
-        if (this.incomingMeta && this.receivedBytes >= totalBytes) {
-          const meta = this.incomingMeta;
-          this.incomingMeta = null; // Clear immediately to prevent re-entrancy on extra chunks
-          this.isTransferring = false;
-
-          const fileBlob = new Blob(this.receivedChunks, { type: meta.mimeType || 'application/octet-stream' });
-          this.receivedChunks = [];
-          this.receivedBytes = 0;
-
-          this.onStatusChange(`File "${meta.name}" received successfully!`, 'success');
-          this.onFileComplete(fileBlob, meta);
-
-          // Send acknowledgment to sender ONCE
-          this._sendControlMessage({ type: 'ack-complete' });
+        if (isAllChunksReceived && !this.finishStarted) {
+          this.finishStarted = true;
+          await this._finalizeReceiverTransfer();
         }
       }
     }
 
     /**
-     * Send file over DataChannel with Chunking and Backpressure Handling
-     * @param {File} file 
+     * Finalize received file: extract File/Blob, compute off-thread SHA-256, verify integrity
+     */
+    async _finalizeReceiverTransfer() {
+      const meta = this.incomingMeta;
+      this.incomingMeta = null;
+
+      try {
+        let fileObj = null;
+
+        if (this.opfsActive && this.opfsWorker) {
+          await this._postOpfsWorkerCmd('finalize');
+          fileObj = await this._postOpfsWorkerCmd('get-file');
+        } else {
+          // Assembling from memory chunk fallback
+          const chunks = this.memoryChunks || [];
+          const combined = [];
+          let currentBlock = new Uint8Array(Math.min(16 * 1024 * 1024, meta.size));
+          let currentPos = 0;
+          let bytesWritten = 0;
+
+          for (let i = 0; i < chunks.length; i++) {
+            if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
+            const arr = new Uint8Array(chunks[i]);
+            let chunkPos = 0;
+            while (chunkPos < arr.byteLength) {
+              const remaining = 16 * 1024 * 1024 - currentPos;
+              const copyLen = Math.min(arr.byteLength - chunkPos, remaining);
+              currentBlock.set(arr.subarray(chunkPos, chunkPos + copyLen), currentPos);
+              currentPos += copyLen;
+              chunkPos += copyLen;
+              bytesWritten += copyLen;
+
+              if (currentPos === 16 * 1024 * 1024) {
+                combined.push(currentBlock);
+                currentBlock = new Uint8Array(Math.min(16 * 1024 * 1024, meta.size - bytesWritten));
+                currentPos = 0;
+              }
+            }
+            chunks[i] = null;
+          }
+          if (currentPos > 0) combined.push(currentBlock.subarray(0, currentPos));
+          fileObj = new Blob(combined, { type: meta.mimeType || 'application/octet-stream' });
+          this.memoryChunks = null;
+        }
+
+        // SHA-256 Integrity Verification off-thread
+        this.onStatusChange('Verifying SHA-256 file integrity checksum…', 'info');
+        const computedHash = await this._computeHash(fileObj);
+
+        if (computedHash !== meta.hash) {
+          throw new Error(`SHA-256 checksum mismatch (Expected ${meta.hash.slice(0, 8)}…, got ${computedHash.slice(0, 8)}…)`);
+        }
+
+        // Verification successful -> notify sender and fire onFileComplete
+        this.isTransferring = false;
+        this._setState('completed');
+        this.onStatusChange(`File "${meta.name}" received & verified successfully! 🎉`, 'success');
+        this.onFileComplete(fileObj, meta);
+
+        this._sendControlMessage({ type: 'ack-complete', hash: computedHash });
+
+      } catch (err) {
+        this._cleanupReceiverStorage(true);
+        this._handleTransferFailure(`Transfer verification failed: ${err.message}`, 'ERR_INTEGRITY_FAILED');
+      }
+    }
+
+    _postOpfsWorkerCmd(type, payload) {
+      return new Promise((resolve, reject) => {
+        if (!this.opfsWorker) return reject(new Error('OPFS worker unavailable'));
+        const id = Math.random().toString(36).slice(2);
+        const onMsg = (e) => {
+          if (e.data && e.data.id === id) {
+            this.opfsWorker.removeEventListener('message', onMsg);
+            if (e.data.ok) resolve(e.data.result);
+            else reject(new Error(e.data.error));
+          }
+        };
+        this.opfsWorker.addEventListener('message', onMsg);
+        this.opfsWorker.postMessage({ id, type, payload });
+      });
+    }
+
+    _cleanupReceiverStorage(deleteFile = false) {
+      if (this.opfsWorker) {
+        try {
+          if (deleteFile) this.opfsWorker.postMessage({ type: 'delete' });
+          else this.opfsWorker.postMessage({ type: 'abort' });
+          this.opfsWorker.terminate();
+        } catch (_) {}
+        this.opfsWorker = null;
+      }
+      this.opfsActive = false;
+      this.memoryChunks = null;
+    }
+
+    /**
+     * Send File over DataChannel with AES-256-GCM E2EE & Event-Driven Backpressure
+     * @param {File|Blob} file 
      */
     async sendFile(file) {
       if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
@@ -627,31 +891,56 @@
       }
 
       if (this.isTransferring) {
-        console.warn('[WebRTC Engine] Transfer already in progress. Ignoring duplicate sendFile call.');
+        console.warn('[WebRTC Engine] Transfer already in progress. Ignoring duplicate call.');
         return;
       }
 
       this.currentFile = file;
       this.isTransferring = true;
+      this._setState('transferring');
       const chunkSize = DEFAULT_CHUNK_SIZE;
       const totalChunks = Math.ceil(file.size / chunkSize);
 
-      // 1. Send Metadata Header
+      // Generate 16-byte random salt for PBKDF2
+      const cryptoObj = getCrypto();
+      this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
+
+      // Derive AES key
+      try {
+        this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+      } catch (keyErr) {
+        this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+        return;
+      }
+
+      // Compute SHA-256 hash of plaintext file before/during streaming
+      this.onStatusChange(`Calculating SHA-256 hash for "${file.name}"…`, 'info');
+      let fileHash = '';
+      try {
+        fileHash = await this._computeHash(file);
+      } catch (hashErr) {
+        this._handleTransferFailure(`SHA-256 calculation failed: ${hashErr.message}`, 'ERR_HASH_FAILED');
+        return;
+      }
+
+      // Send Metadata Header
       const metadata = {
         type: 'metadata',
         name: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
         chunkSize: chunkSize,
-        totalChunks: totalChunks
+        totalChunks: totalChunks,
+        salt: bytesToBase64(this.salt),
+        hash: fileHash
       };
 
-      this.onStatusChange(`Starting transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
+      this.onStatusChange(`Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
       this._sendControlMessage(metadata);
 
-      // 2. Read and Stream Chunks Zero-Copy with Event-Driven Backpressure
+      // Read, encrypt, and stream chunks with Event-Driven Backpressure
       let offset = 0;
-      let chunkCount = 0;
+      let chunkIndex = 0;
       this.lastProgressTime = Date.now();
       this.lastProgressBytes = 0;
       this.currentSpeedBps = 0;
@@ -665,16 +954,23 @@
         const slice = file.slice(offset, offset + chunkSize);
         const chunkBuffer = await slice.arrayBuffer();
 
+        let encryptedFrame;
         try {
-          this.dataChannel.send(chunkBuffer);
+          encryptedFrame = await this.encryptChunk(chunkBuffer, chunkIndex, this.aesKey);
+        } catch (encErr) {
+          this._handleTransferFailure(`Failed to encrypt chunk ${chunkIndex}: ${encErr.message}`, 'ERR_ENCRYPT_CHUNK');
+          return;
+        }
+
+        try {
+          this.dataChannel.send(encryptedFrame.buffer);
         } catch (err) {
-          this.onError(`Failed to send chunk: ${err.message}`, 'ERR_CHUNK_SEND');
-          this.isTransferring = false;
+          this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
           return;
         }
 
         offset += chunkBuffer.byteLength;
-        chunkCount++;
+        chunkIndex++;
 
         const now = Date.now();
         const timeDiff = (now - this.lastProgressTime) / 1000;
@@ -699,7 +995,7 @@
           });
         }
 
-        if (chunkCount % 100 === 0) {
+        if (chunkIndex % 50 === 0) {
           if (typeof requestAnimationFrame !== 'undefined') {
             await new Promise(r => requestAnimationFrame(r));
           } else {
@@ -710,48 +1006,84 @@
     }
 
     /**
-     * Wait for bufferedAmountLow event when backpressure high watermark hit.
-     * Uses event-driven Promise with a 20ms safety fallback timer to guarantee no stalls.
+     * Event-driven Backpressure wait. Resolves ONLY when bufferedAmount <= BUFFER_LOW_WATERMARK.
+     * Rejects immediately if DataChannel closes or transfer is cancelled.
      */
     _waitForBufferLow() {
       if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
         return Promise.resolve();
       }
-      return new Promise((resolve) => {
-        let fallbackTimer = null;
-        const done = () => {
-          if (fallbackTimer) clearTimeout(fallbackTimer);
+      return new Promise((resolve, reject) => {
+        let checkTimer = null;
+
+        const cleanup = () => {
+          if (checkTimer) clearInterval(checkTimer);
           if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
+        };
+
+        const done = () => {
+          cleanup();
+          if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            reject(new Error('DataChannel closed while waiting for backpressure buffer'));
+            return;
+          }
+          if (!this.isTransferring) {
+            reject(new Error('Transfer cancelled while waiting for backpressure buffer'));
+            return;
+          }
           resolve();
         };
-        this.dataChannel.onbufferedamountlow = done;
-        fallbackTimer = setTimeout(() => {
-          if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
+
+        if (this.dataChannel) {
+          this.dataChannel.onbufferedamountlow = () => {
+            if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
+              done();
+            }
+          };
+        }
+
+        checkTimer = setInterval(() => {
+          if (!this.dataChannel || this.dataChannel.readyState !== 'open' || !this.isTransferring) {
+            done();
+          } else if (this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
             done();
           }
-        }, 20);
+        }, 25);
       });
     }
 
     /**
-     * Cancel active transfer
+     * Send application-level control message (e.g., Flux Zen game invite/move)
+     * @param {Object} msgObj 
      */
+    sendControlMessage(msgObj) {
+      this._sendControlMessage({
+        type: 'zen_game',
+        ...msgObj
+      });
+    }
+
     cancelTransfer() {
       if (this.dataChannel && this.dataChannel.readyState === 'open') {
-        this.isTransferring = false;
         this._sendControlMessage({ type: 'cancel' });
-        this.onStatusChange('Transfer cancelled', 'warning');
+      }
+      this._cleanupReceiverStorage(true);
+      this.isTransferring = false;
+      this._setState('cancelled');
+      this.onStatusChange('Transfer cancelled', 'warning');
+    }
+
+    _handlePeerDisconnect(reason) {
+      if (this.isTransferring) {
+        this._cleanupReceiverStorage(true);
+        this._handleTransferFailure(`Transfer aborted: ${reason}`, 'ERR_PEER_DISCONNECTED');
       }
     }
 
-    /**
-     * Handle unexpected peer disconnect during transfer
-     */
-    _handlePeerDisconnect(reason) {
-      if (this.isTransferring) {
-        this.isTransferring = false;
-        this.onError(`Transfer aborted: ${reason}`, 'ERR_PEER_DISCONNECTED');
-      }
+    _handleTransferFailure(errorMessage, errorCode) {
+      this.isTransferring = false;
+      this._setState('failed');
+      this.onError(errorMessage, errorCode);
     }
 
     _sendControlMessage(obj) {
@@ -761,7 +1093,7 @@
     }
 
     _sendSignaling(data) {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      if (this.ws && this.ws.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1)) {
         this.ws.send(JSON.stringify(data));
       }
     }
@@ -774,11 +1106,10 @@
       return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
     }
 
-    /**
-     * Clean up and close all connection instances
-     */
     disconnect() {
       this.isTransferring = false;
+      this._cleanupReceiverStorage(true);
+      this._setState('idle');
 
       if (this.dataChannel) {
         try { this.dataChannel.close(); } catch (e) {}
@@ -791,7 +1122,7 @@
       }
 
       if (this.ws) {
-        if (this.ws.readyState === WebSocket.OPEN && this.roomCode) {
+        if (this.ws.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1) && this.roomCode) {
           this._sendSignaling({ type: 'leave-room' });
         }
         try { this.ws.close(); } catch (e) {}
@@ -799,11 +1130,18 @@
       }
 
       this.roomCode = null;
+      this.sessionCode = null;
       this.role = null;
       this.pendingIceCandidates = [];
+      this.aesKey = null;
+      this.salt = null;
     }
   }
 
-  // Export to window
-  global.FluxWebRTCEngine = FluxWebRTCEngine;
-})(typeof window !== 'undefined' ? window : this);
+  // Export
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = FluxWebRTCEngine;
+  } else {
+    global.FluxWebRTCEngine = FluxWebRTCEngine;
+  }
+})(typeof window !== 'undefined' ? window : globalThis);

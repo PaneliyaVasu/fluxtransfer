@@ -643,7 +643,9 @@
 
     // ─── Code Generation & QR ─────────────────────────────────────────────────
     function genCode() {
-      return String(Math.floor(1000 + Math.random() * 9000));
+      const array = new Uint32Array(1);
+      (window.crypto || window.msCrypto).getRandomValues(array);
+      return String(100000 + (array[0] % 900000));
     }
 
     function renderQR(code) {
@@ -677,8 +679,8 @@
 
     $('connectBtn').onclick = () => {
       const code = $('codeInput').value.trim();
-      if (!/^\d{4}$/.test(code)) {
-        showAlert('Please enter a valid 4-digit code.', 'warning');
+      if (!/^\d{4,6}$/.test(code)) {
+        showAlert('Please enter a valid pairing code.', 'warning');
         return;
       }
 
@@ -699,9 +701,12 @@
           if (type === 'success') setRadar('connected');
           else if (type === 'error') setRadar('error');
         },
+        onControlMessage: (msg) => {
+          if (window.fluxZenOrchestrator) {
+            window.fluxZenOrchestrator.handleGameMessage(msg);
+          }
+        },
         onPeerJoined: () => {
-          // Peer entered the room — P2P negotiation starting, DataChannel not open yet.
-          // Just show the progress panel; actual send happens in onDataChannelOpen.
           if (mode === 'send' && selectedFile) {
             $('sendCodeBox').classList.add('hidden');
             $('sendProgressWrap').classList.remove('hidden');
@@ -709,7 +714,6 @@
           }
         },
         onDataChannelOpen: () => {
-          // DataChannel is NOW truly open — safe to start the file transfer.
           if (mode === 'send' && selectedFile && !webrtcEngine.isTransferring) {
             webrtcEngine.sendFile(selectedFile);
           }
@@ -792,7 +796,7 @@
         }
       });
 
-      webrtcEngine.connect(code);
+      webrtcEngine.connect(code, code);
     }
 
     // ─── History Helpers ──────────────────────────────────────────────────────
