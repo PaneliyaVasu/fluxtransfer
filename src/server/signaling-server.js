@@ -34,8 +34,7 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
   '.txt': 'text/plain',
-  '.xml': 'text/xml',
-  '.apk': 'application/vnd.android.package-archive',
+  '.xml': 'text/xml'
 };
 
 function serveStatic(req, res) {
@@ -98,10 +97,6 @@ function serveStatic(req, res) {
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'X-Content-Type-Options': 'nosniff',
     };
-
-    if (ext === '.apk') {
-      headers['Content-Disposition'] = 'attachment; filename="FluxTransfer.apk"';
-    }
 
     res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
