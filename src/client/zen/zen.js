@@ -11,15 +11,7 @@
 
   const STATE = {
     status: 'full', // Always full by default for permanent 2-panel split UI
-    activeMode: null,  // 'play' | 'discover' | 'zen'
-    selectedGame: null,
-    gameStateMode: 'menu', // 'menu' | 'mode_select' | 'invite_pending' | 'playing'
-    gameMode: null, // 'ai' | 'local' | 'peer'
-    
-    // Game instances
-    snakeInstance: null,
-    memoryInstance: null,
-    gameInstance: null,
+    activeMode: 'discover',  // 'discover' | 'zen'
     
     // Fact state
     currentFact: null,
@@ -31,8 +23,7 @@
     userAction: null,
     lastEta: Infinity,
 
-    // Game play toast & transfer completion states
-    gamePlayPopupShown: false,
+    // Transfer completion states
     transferComplete: false
   };
 
@@ -62,45 +53,8 @@
       STATE.status = 'full';
     }
 
-    showGamePlayPopup() {
-      if (STATE.gamePlayPopupShown) return;
-      STATE.gamePlayPopupShown = true;
-
-      if (document.getElementById('flux-zen-gameplay-popup')) return;
-
-      const popup = document.createElement('div');
-      popup.id = 'flux-zen-gameplay-popup';
-      popup.className = 'flux-zen-gameplay-popup';
-      popup.innerHTML = `
-        <div class="zen-gameplay-header">
-          <div class="zen-gameplay-title">🎮 Play Games While You Wait!</div>
-          <button class="zen-gameplay-close" id="zenGameplayCloseBtn" title="Dismiss">✖</button>
-        </div>
-        <div class="zen-gameplay-desc">
-          File transfer started! Enjoy Tic-Tac-Toe, Connect 4, Pong, or Minesweeper on the right.
-        </div>
-        <button class="zen-gameplay-btn" id="zenGameplayPlayBtn">Let's Play! 🎮</button>
-      `;
-      document.body.appendChild(popup);
-
-      const close = () => this.closeGamePlayPopup();
-      document.getElementById('zenGameplayCloseBtn').onclick = close;
-      document.getElementById('zenGameplayPlayBtn').onclick = close;
-
-      setTimeout(() => {
-        this.closeGamePlayPopup();
-      }, 5000);
-    }
-
-    closeGamePlayPopup() {
-      const popup = document.getElementById('flux-zen-gameplay-popup');
-      if (popup) {
-        popup.classList.add('closing');
-        setTimeout(() => {
-          if (popup.parentNode) popup.parentNode.removeChild(popup);
-        }, 250);
-      }
-    }
+    showGamePlayPopup() {}
+    closeGamePlayPopup() {}
 
     reset() {
       try {
@@ -137,9 +91,6 @@
 
         const eta = (typeof etaSeconds === 'number' && isFinite(etaSeconds)) ? etaSeconds : Infinity;
         STATE.lastEta = eta;
-
-        // Show game play toast popup on transfer start
-        this.showGamePlayPopup();
 
         STATE.status = 'full';
         this.updateEtaText(eta, progressData);
@@ -325,8 +276,7 @@
 
             <!-- Navigation Tabs matching flux_zen_desktop_dashboard -->
             <nav class="flex gap-2 border-b border-glass-border pb-1">
-              <button id="zenTabPlay" data-mode="play" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-primary border-b-2 border-primary transition-colors">Play</button>
-              <button id="zenTabDiscover" data-mode="discover" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-on-surface-variant hover:text-primary transition-colors">Discover</button>
+              <button id="zenTabDiscover" data-mode="discover" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-primary border-b-2 border-primary transition-colors">Discover</button>
               <button id="zenTabZen" data-mode="zen" class="px-4 py-2 font-display text-xs font-bold uppercase tracking-wider text-on-surface-variant hover:text-primary transition-colors">Zen</button>
             </nav>
 
@@ -345,7 +295,7 @@
       };
 
       // Wire tabs
-      const tabs = ['zenTabPlay', 'zenTabDiscover', 'zenTabZen'];
+      const tabs = ['zenTabDiscover', 'zenTabZen'];
       tabs.forEach(tabId => {
         const tabEl = document.getElementById(tabId);
         if (tabEl) {
@@ -357,8 +307,8 @@
       });
 
       // Set default mode if not set
-      if (!STATE.activeMode) {
-        STATE.activeMode = 'play';
+      if (!STATE.activeMode || STATE.activeMode === 'play') {
+        STATE.activeMode = 'discover';
       }
       this.switchMode(STATE.activeMode);
     }
@@ -382,23 +332,29 @@
         STATE.activeMode = mode;
 
         // Update active class on tabs
-        const modes = ['play', 'discover', 'zen'];
+        const modes = ['discover', 'zen'];
         modes.forEach(m => {
           const tabEl = document.getElementById('zenTab' + m.charAt(0).toUpperCase() + m.slice(1));
           if (tabEl) {
-            tabEl.classList.toggle('active', m === mode);
+            const isActive = m === mode;
+            tabEl.classList.toggle('active', isActive);
+            if (isActive) {
+              tabEl.classList.add('text-primary', 'border-b-2', 'border-primary');
+              tabEl.classList.remove('text-on-surface-variant');
+            } else {
+              tabEl.classList.remove('text-primary', 'border-b-2', 'border-primary');
+              tabEl.classList.add('text-on-surface-variant');
+            }
           }
         });
 
         const contentArea = document.getElementById('zenModeContent');
         if (!contentArea) return;
 
-        if (mode === 'play') {
-          this.renderPlayMode(contentArea);
-        } else if (mode === 'discover') {
-          this.renderDiscoverMode(contentArea);
-        } else if (mode === 'zen') {
+        if (mode === 'zen') {
           this.renderZenMode(contentArea);
+        } else {
+          this.renderDiscoverMode(contentArea);
         }
       } catch (err) {
         console.error('Error switching Flux Zen modes (shielded):', err);

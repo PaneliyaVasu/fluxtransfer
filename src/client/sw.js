@@ -14,7 +14,6 @@ const SHELL_ASSETS = [
   '/site.webmanifest',
   '/zen/zen.js',
   '/zen/zen.css',
-  '/zen/games.js',
   '/zen/facts.js',
   '/zen/visuals.js',
   '/download/',
