@@ -30,6 +30,30 @@ export default function TransferDashboard({ transfer, addToast }) {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  // Auto-connect when scanned via QR code link (?code=123456)
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const urlCode = params.get('code');
+      if (urlCode && /^\d{6}$/.test(urlCode.trim())) {
+        const cleanCode = urlCode.trim();
+        setInputCode(cleanCode);
+        
+        const tryJoin = (attempts = 0) => {
+          if (transfer.joinReceiveSession) {
+            transfer.joinReceiveSession(cleanCode);
+            if (addToast) addToast('info', 'QR Code Scanned', `Connecting to code ${cleanCode}...`);
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } else if (attempts < 10) {
+            setTimeout(() => tryJoin(attempts + 1), 100);
+          }
+        };
+
+        setTimeout(tryJoin, 150);
+      }
+    }
+  }, []);
+
   const {
     engineState,
     role,
@@ -446,7 +470,11 @@ export default function TransferDashboard({ transfer, addToast }) {
                 }}
               >
                 <QRCodeSVG
-                  value={pairingCode || '000000'}
+                  value={
+                    typeof window !== 'undefined' && pairingCode
+                      ? `${window.location.origin}/?code=${pairingCode}`
+                      : pairingCode || '000000'
+                  }
                   size={132}
                   bgColor="#ffffff"
                   fgColor="#0f172a"

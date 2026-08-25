@@ -519,7 +519,9 @@
     _createPeerConnection() {
       const pcConfig = {
         iceServers: this.iceServers,
-        iceCandidatePoolSize: 2
+        iceCandidatePoolSize: 4,
+        bundlePolicy: 'max-bundle',
+        iceTransportPolicy: 'all'
       };
 
       let RTCPeerConnectionImpl;
@@ -543,18 +545,42 @@
           this._setState('connected');
           this._reportConnectionType();
         } else if (state === 'failed') {
-          this._setState('failed');
-          this.onStatusChange('P2P connection failed', 'error');
-          this.onError('WebRTC P2P connection failed.', 'ERR_ICE_FAILED');
-          this.disconnect();
+          console.warn('[WebRTC Engine] ICE connection failed, checking connectionState');
+          if (this.pc.connectionState === 'failed') {
+            this._setState('failed');
+            this.onStatusChange('P2P connection failed', 'error');
+            this.onError('WebRTC P2P connection failed. Check your network or firewall.', 'ERR_ICE_FAILED');
+            this.disconnect();
+          }
         } else if (state === 'disconnected') {
           this.onStatusChange('P2P connection interrupted', 'warning');
         }
       };
 
+      if ('onconnectionstatechange' in this.pc) {
+        this.pc.onconnectionstatechange = () => {
+          const state = this.pc.connectionState;
+          console.log(`[WebRTC Engine] Connection State: ${state}`);
+          if (state === 'connected') {
+            this._setState('connected');
+          } else if (state === 'failed') {
+            this._setState('failed');
+            this.onStatusChange('P2P connection failed', 'error');
+            this.onError('WebRTC P2P connection failed. Please ensure both devices can communicate.', 'ERR_PEER_FAILED');
+            this.disconnect();
+          }
+        };
+      }
+
       this.pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          this._sendSignaling({ type: 'ice-candidate', candidate: event.candidate });
+        if (event.candidate && event.candidate.candidate) {
+          const candidateData = event.candidate.toJSON ? event.candidate.toJSON() : {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            usernameFragment: event.candidate.usernameFragment
+          };
+          this._sendSignaling({ type: 'ice-candidate', candidate: candidateData });
         }
       };
 
@@ -651,7 +677,7 @@
     }
 
     async _handleRemoteIceCandidate(candidate) {
-      if (!candidate) return;
+      if (!candidate || !candidate.candidate) return;
       let RTCIceCandidateImpl;
       if (typeof window !== 'undefined' && window.RTCIceCandidate) {
         RTCIceCandidateImpl = window.RTCIceCandidate;
