@@ -166,13 +166,31 @@ export default function TransferDashboard({ transfer, addToast }) {
   const isReceiving = role === 'receiver' || Boolean(receivedFileUrl) || (engineState !== 'idle' && !selectedFile);
 
   const renderTransferProgressCard = () => (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'var(--glass-card-bg)', padding: '20px 16px', borderRadius: '16px', border: '1px solid var(--glass-card-border)' }}>
+    <div
+      style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        justify: 'space-between',
+        background: 'var(--glass-card-bg)',
+        padding: '20px 18px',
+        borderRadius: '18px',
+        border: '1px solid var(--glass-card-border)',
+        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.04)'
+      }}
+    >
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-          <h4 style={{ fontSize: '1.02rem', fontWeight: 700, color: 'var(--text-title)' }}>
-            Transfer Progress
-          </h4>
-          <span className="status-badge" style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
+        {/* Top Header Row: Status Title & Badge */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+          <div>
+            <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '2px' }}>
+              Transfer Progress
+            </h4>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              {isSending ? 'Sending file to peer' : 'Receiving file from peer'}
+            </div>
+          </div>
+          <span className="status-badge" style={{ fontSize: '0.75rem', padding: '5px 12px', borderRadius: '999px' }}>
             <span
               className="status-badge-dot"
               style={{
@@ -203,38 +221,72 @@ export default function TransferDashboard({ transfer, addToast }) {
           </span>
         </div>
 
-        {/* Dynamic Progress Bar */}
-        <div style={{ width: '100%', background: 'rgba(203, 213, 225, 0.4)', borderRadius: '999px', height: '10px', overflow: 'hidden', marginBottom: '16px' }}>
+        {/* Progress Bar with Glowing Gradient Fill */}
+        <div style={{ width: '100%', background: 'rgba(203, 213, 225, 0.35)', borderRadius: '999px', height: '10px', overflow: 'hidden', marginBottom: '18px' }}>
           <div
             style={{
               height: '100%',
               width: `${transferProgress}%`,
               background: isCompleted ? 'linear-gradient(90deg, #10b981, #059669)' : 'linear-gradient(90deg, #4f46e5, #7c3aed)',
               borderRadius: '999px',
-              transition: 'width 0.3s ease'
+              transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+              boxShadow: '0 0 10px rgba(124, 58, 237, 0.4)'
             }}
           ></div>
         </div>
 
-        {/* File & Speed Info Row */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-          <div style={{ fontWeight: 700, color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }}>
-            {selectedFile?.name || receivedFileName || 'Incoming File'}
+        {/* Rich File Details Box */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            background: 'var(--glass-card-bg)',
+            padding: '12px 14px',
+            borderRadius: '14px',
+            border: '1px solid var(--glass-card-border)',
+            marginBottom: '16px'
+          }}
+        >
+          {/* File Icon Badge */}
+          <div
+            style={{
+              width: '42px',
+              height: '42px',
+              borderRadius: '12px',
+              background: 'rgba(124, 58, 237, 0.1)',
+              color: '#7c3aed',
+              display: 'flex',
+              alignItems: 'center',
+              justify: 'center',
+              flexShrink: 0
+            }}
+          >
+            <FileText size={20} />
           </div>
-          <div>
-            {formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFile?.size || 0)}
-            {engineState === 'transferring' && ` • ${transferSpeed}`}
+
+          {/* Name, Byte Counter, and Live Speed */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '3px' }}>
+              {selectedFile?.name || receivedFileName || 'Incoming File'}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+              <span>{formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFile?.size || 0)}</span>
+              {engineState === 'transferring' && (
+                <span style={{ fontWeight: 600, color: '#7c3aed' }}>⚡ {transferSpeed}</span>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Download / Cancel Actions pushed to bottom edge */}
+      {/* Action Buttons Row (Download / Cancel) */}
       <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
         {receivedFileUrl && (
           <button
             onClick={handleDownloadFile}
             className="glass-btn glass-btn-dark"
-            style={{ flex: 1, padding: '10px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.88rem', fontWeight: 600, cursor: 'pointer' }}
+            style={{ flex: 1, height: '44px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer' }}
           >
             Download File <Download size={16} />
           </button>
@@ -242,7 +294,7 @@ export default function TransferDashboard({ transfer, addToast }) {
         <button
           onClick={handleCancel}
           className="glass-btn"
-          style={{ flex: receivedFileUrl ? '0' : '1', padding: '10px 16px', fontSize: '0.85rem', opacity: 0.85 }}
+          style={{ flex: receivedFileUrl ? '0' : '1', height: '44px', fontSize: '0.88rem', fontWeight: 600, opacity: 0.9 }}
         >
           {isCompleted ? 'Close' : 'Cancel'}
         </button>
