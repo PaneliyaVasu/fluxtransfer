@@ -114,9 +114,10 @@
         if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SIGNALING_URL) {
           defaultSignalingUrl = import.meta.env.VITE_SIGNALING_URL;
         } else if (window.location.protocol === 'https:') {
-          defaultSignalingUrl = `wss://${window.location.host}`;
+          defaultSignalingUrl = `wss://${window.location.host}/ws`;
         } else {
-          defaultSignalingUrl = `ws://${window.location.hostname}:8080`;
+          // Use Vite /ws proxy on the same port (3000) so mobile devices connect seamlessly without firewall blockage
+          defaultSignalingUrl = `ws://${window.location.host}/ws`;
         }
       } else {
         defaultSignalingUrl = 'ws://localhost:8080';
@@ -443,6 +444,7 @@
       }
 
       this.ws.onopen = () => {
+        this._hasTriedFallback = false;
         this.onStatusChange('Connected to signaling server. Joining room…', 'info');
         this._sendSignaling({ type: 'join-room', room: this.roomCode });
       };
@@ -457,6 +459,17 @@
       };
 
       this.ws.onerror = () => {
+        if (!this._hasTriedFallback && typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:') {
+          this._hasTriedFallback = true;
+          const altUrl = this.signalingUrl.includes(':8080')
+            ? `ws://${window.location.host}/ws`
+            : `ws://${window.location.hostname}:8080`;
+          console.log(`[WebRTC Engine] Primary signaling failed. Retrying fallback URL: ${altUrl}`);
+          this.signalingUrl = altUrl;
+          try { this.ws.close(); } catch (_) {}
+          this.connect(this.roomCode, this.sessionCode);
+          return;
+        }
         this._setState('failed');
         this.onStatusChange('Signaling server connection error', 'error');
         this.onError('WebSocket connection to signaling server failed.', 'ERR_WS_ERROR');
