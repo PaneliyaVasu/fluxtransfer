@@ -4,7 +4,12 @@
   "private": true,
   "description": "Internet-first peer-to-peer file transfer using WebRTC and PeerJS",
   "scripts": {
-    "dev": "node src/server/signaling-server.js",
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"magenta.bold,cyan.bold\" \"npm run dev:server\" \"npm run dev:client -- --host\"",
+    "dev:all": "concurrently -n \"SERVER,CLIENT\" -c \"magenta.bold,cyan.bold\" \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "node src/server/signaling-server.js",
+    "dev:client": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "start": "node src/server/signaling-server.js",
     "dev:static": "npx serve --no-request-logging src/client"
   },
@@ -16,6 +21,15 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "lucide-react": "^1.34.0",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.0",
+    "concurrently": "^10.0.5",
+    "vite": "^8.2.2"
   }
 }

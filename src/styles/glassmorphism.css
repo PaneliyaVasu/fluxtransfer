@@ -1,0 +1,654 @@
+/* ==========================================================================
+   FluxTransfer — Light Iridescent Liquid Glassmorphism (Target UI Match)
+   ========================================================================== */
+
+:root {
+  /* Light Ambient Background */
+  --bg-main: #f2f4f8;
+  --bg-gradient: radial-gradient(circle at 10% 10%, rgba(238, 230, 255, 0.7) 0%, transparent 50%),
+    radial-gradient(circle at 90% 90%, rgba(220, 235, 255, 0.7) 0%, transparent 50%),
+    radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.9) 0%, transparent 70%);
+
+  /* Text Colors */
+  --text-title: #0f172a;
+  --text-body: #334155;
+  --text-muted: #64748b;
+  --text-purple: #7c3aed;
+
+  /* Accent Colors */
+  --accent-purple: #7c3aed;
+  --accent-purple-light: rgba(124, 58, 237, 0.1);
+  --accent-emerald: #10b981;
+  --accent-dark: #1e2433;
+  --accent-dark-hover: #0f141f;
+
+  /* Glass Surface Tokens */
+  --glass-card-bg: rgba(255, 255, 255, 0.65);
+  --glass-card-border: rgba(255, 255, 255, 0.85);
+  --glass-card-shadow: 0 15px 35px rgba(120, 130, 160, 0.08), 0 5px 15px rgba(255, 255, 255, 0.6) inset;
+  --dropzone-bg: rgba(255, 255, 255, 0.35);
+  --glass-blur: 24px;
+}
+
+body.dark-theme {
+  --bg-main: #060913;
+  --bg-gradient: radial-gradient(circle at 10% 10%, rgba(30, 27, 75, 0.6) 0%, transparent 50%),
+    radial-gradient(circle at 90% 90%, rgba(15, 23, 42, 0.95) 0%, transparent 50%),
+    radial-gradient(circle at 50% 30%, rgba(10, 14, 26, 0.95) 0%, transparent 70%);
+  --text-title: #ffffff;
+  --text-body: #cbd5e1;
+  --text-muted: #94a3b8;
+  --glass-card-bg: rgba(13, 18, 32, 0.65);
+  --glass-card-border: rgba(255, 255, 255, 0.12);
+  --glass-card-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  --dropzone-bg: rgba(15, 23, 42, 0.45);
+}
+
+/* Dark Theme Image Swap & Component Styling matching Image 12_05_11 PM.png */
+.hero-cloud-light {
+  display: block;
+}
+
+.hero-cloud-dark {
+  display: none;
+}
+
+.hero-arrow-badge {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 1),
+    inset 0 -1.5px 3px 0 rgba(255, 255, 255, 0.4),
+    0 10px 24px -2px rgba(124, 58, 237, 0.18);
+  color: #7c3aed;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hero-arrow-badge:hover {
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 1),
+    inset 0 -1.5px 3px 0 rgba(255, 255, 255, 0.5),
+    0 14px 30px -2px rgba(124, 58, 237, 0.28);
+  transform: translateY(-2px) scale(1.05);
+}
+
+body.dark-theme .hero-cloud-light {
+  display: none;
+}
+
+body.dark-theme .hero-cloud-dark {
+  display: block;
+  mix-blend-mode: multiply;
+  transform: translate(-50%, -50%) scale(1.18) !important;
+  filter: brightness(1.25) contrast(1.15) drop-shadow(0 0 35px rgba(139, 92, 246, 0.4));
+}
+
+body.dark-theme .hero-arrow-badge {
+  background: rgba(139, 92, 246, 0.2);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1.5px 3px 0 rgba(139, 92, 246, 0.3),
+    0 12px 30px rgba(139, 92, 246, 0.35);
+  color: #c084fc;
+}
+
+/* Dark Theme Background Shader Overlay */
+body.dark-theme .bg-liquid-overlay {
+  background-image: url('/assets/liquid-bg-dark.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.95;
+  mix-blend-mode: normal;
+}
+
+/* Dark Theme Glass Cards & Components */
+body.dark-theme .glass-card {
+  background: rgba(13, 18, 32, 0.65);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+body.dark-theme .glass-header {
+  background: rgba(10, 14, 26, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.18), 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+body.dark-theme .glass-footer,
+body.dark-theme .apple-glass-footer {
+  background: rgba(10, 14, 26, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.18), 0 -4px 20px rgba(0, 0, 0, 0.4);
+}
+
+body.dark-theme .icon-pill-purple {
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #c084fc;
+}
+
+body.dark-theme .icon-pill-emerald {
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+body.dark-theme .glass-input {
+  background: rgba(15, 23, 42, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #f8fafc;
+}
+
+body.dark-theme .glass-input:focus {
+  background: rgba(15, 23, 42, 0.85);
+  border-color: #a855f7;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.25);
+}
+
+.pin-slot-input {
+  width: 40px !important;
+  height: 55px !important;
+  min-width: 40px !important;
+  max-width: 44px !important;
+  aspect-ratio: 40 / 55 !important;
+  box-sizing: border-box !important;
+  flex-shrink: 0 !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(203, 213, 225, 0.8);
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  text-align: center !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 1.35rem !important;
+  font-weight: 800 !important;
+  color: var(--text-title);
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.pin-slot-input:focus {
+  border-color: #7c3aed !important;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.18) !important;
+}
+
+body.dark-theme .pin-slot-input {
+  background: rgba(15, 23, 42, 0.65) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #f8fafc !important;
+}
+
+body.dark-theme .pin-slot-input:focus {
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.25) !important;
+}
+
+body.dark-theme .glass-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #f8fafc;
+}
+
+body.dark-theme .glass-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+body.dark-theme .glass-btn-dark {
+  background: #090e1a;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+body.dark-theme .glass-action-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e2e8f0;
+}
+
+body.dark-theme .glass-action-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+body.dark-theme .glass-logo-box {
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #c084fc;
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.25);
+}
+
+body.dark-theme .progress-bar-bg {
+  background: rgba(30, 41, 59, 0.8);
+}
+
+body.dark-theme .progress-bar-fill {
+  background: linear-gradient(90deg, #7c3aed, #a855f7);
+  box-shadow: 0 0 14px rgba(168, 85, 247, 0.5);
+}
+
+body.dark-theme .status-badge {
+  background: rgba(139, 92, 246, 0.15);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #c084fc;
+}
+
+body.dark-theme .status-badge-dot {
+  background: #c084fc;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-main);
+  background-image: var(--bg-gradient);
+  background-attachment: fixed;
+  color: var(--text-body);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Background Liquid Texture Shader */
+.bg-liquid-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('/assets/liquid-bg.png');
+  background-size: cover;
+  background-position: center;
+  opacity: 0.12;
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: multiply;
+}
+
+/* Light Glass Card Panel */
+.glass-card {
+  background: var(--glass-card-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-card-border);
+  border-radius: 24px;
+  box-shadow: var(--glass-card-shadow);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.glass-card:hover {
+  box-shadow: 0 20px 45px rgba(120, 130, 160, 0.12), 0 5px 15px rgba(255, 255, 255, 0.8) inset;
+}
+
+/* Liquid Glass Header — Exact Image 1 Match */
+.glass-header {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 9999px;
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 2px 0 rgba(255, 255, 255, 0.3),
+    0 10px 30px -4px rgba(120, 130, 160, 0.08);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+}
+
+.glass-header:hover {
+  background: rgba(255, 255, 255, 0.35);
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 2px 0 rgba(255, 255, 255, 0.4),
+    0 14px 36px -4px rgba(120, 130, 160, 0.12);
+}
+
+/* Liquid Glass Footer — Exact Target UI Match */
+.glass-footer {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 20px 20px 0 0;
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 2px 0 rgba(255, 255, 255, 0.3),
+    0 -4px 20px -2px rgba(120, 130, 160, 0.06);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  margin-top: 16px;
+  margin-bottom: 0px;
+  z-index: 10;
+}
+
+.glass-footer:hover {
+  background: rgba(255, 255, 255, 0.38);
+  box-shadow:
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 1),
+    inset 0 -1px 2px 0 rgba(255, 255, 255, 0.4),
+    0 14px 36px -4px rgba(120, 130, 160, 0.12);
+}
+
+/* Glass Logo Box */
+.glass-logo-box {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7c3aed;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 8px rgba(124, 58, 237, 0.06);
+  transition: all 0.2s ease;
+}
+
+/* Glass Action Button (Help / Settings) */
+.glass-action-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 8px rgba(0, 0, 0, 0.03);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.glass-action-btn:hover {
+  background: rgba(255, 255, 255, 0.75);
+  border-color: rgba(255, 255, 255, 1);
+  transform: translateY(-1px) scale(1.04);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 1),
+    0 4px 12px rgba(100, 110, 140, 0.1);
+}
+
+/* Icon Pills */
+.icon-pill {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.icon-pill-purple {
+  background: rgba(124, 58, 237, 0.08);
+  color: var(--accent-purple);
+}
+
+.icon-pill-emerald {
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--accent-emerald);
+}
+
+/* Glass Buttons */
+.glass-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 14px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text-title);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.glass-btn:hover {
+  background: rgba(255, 255, 255, 0.9);
+  transform: translateY(-1px);
+}
+
+.glass-btn-dark {
+  background: var(--accent-dark);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 20px rgba(30, 36, 51, 0.25);
+}
+
+.glass-btn-dark:hover {
+  background: var(--accent-dark-hover);
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(30, 36, 51, 0.35);
+}
+
+.glass-btn-circle {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+/* Glass Input */
+.glass-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.glass-input {
+  width: 100%;
+  padding: 14px 48px 14px 18px;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(220, 225, 235, 0.8);
+  border-radius: 16px;
+  color: var(--text-title);
+  font-size: 0.95rem;
+  font-family: inherit;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.glass-input:focus {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+/* Progress Bar */
+.progress-bar-bg {
+  width: 100%;
+  height: 6px;
+  background: rgba(226, 232, 240, 0.7);
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #6366f1);
+  border-radius: 9999px;
+  transition: width 0.3s ease;
+}
+
+/* Status Badges */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  border-radius: 9999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: rgba(124, 58, 237, 0.08);
+  color: var(--accent-purple);
+}
+
+.status-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-purple);
+}
+
+/* Modal Backdrop */
+.glass-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+/* Main Layout Content Scroll & Alignment */
+.app-main-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+
+/* Custom Scrollbar */
+.app-main-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.app-main-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-main-content::-webkit-scrollbar-thumb {
+  background: rgba(124, 58, 237, 0.25);
+  border-radius: 999px;
+}
+
+/* Apple Liquid Glass Toast Notifications (Slide-in Right) */
+.toast-container {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.glass-toast {
+  pointer-events: auto;
+  min-width: 320px;
+  max-width: 420px;
+  padding: 14px 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 12px 36px -4px rgba(120, 130, 160, 0.15),
+    inset 0 1.5px 0 0 rgba(255, 255, 255, 1);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  animation: slideInRight 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.dark-theme .glass-toast {
+  background: rgba(15, 23, 42, 0.85);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow:
+    0 16px 40px -4px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+}
+
+.toast-error {
+  border-left: 4px solid #ef4444 !important;
+}
+
+.toast-success {
+  border-left: 4px solid #10b981 !important;
+}
+
+.toast-info {
+  border-left: 4px solid #7c3aed !important;
+}
+
+@keyframes slideInRight {
+  0% {
+    opacity: 0;
+    transform: translateX(120%) scale(0.95);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* Desktop / PC Rule: Hide QR scan button on desktop screens */
+@media (min-width: 769px) {
+  .qr-scan-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-main-content {
+    justify-content: flex-start;
+    padding-top: 4px;
+    padding-bottom: 24px;
+  }
+}
