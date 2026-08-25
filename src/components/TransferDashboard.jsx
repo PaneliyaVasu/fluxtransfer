@@ -44,7 +44,10 @@ export default function TransferDashboard({ transfer, addToast }) {
           code.split('').forEach((digit, idx) => {
             if (digitRefs[idx]?.current) digitRefs[idx].current.value = digit;
           });
-          if (addToast) addToast('success', 'QR Code Scanned', `Code ${code} found! Tap Receive to connect.`);
+          if (addToast) addToast('success', 'QR Code Scanned', `Connecting to code ${code}...`);
+          if (transfer.joinReceiveSession) {
+            transfer.joinReceiveSession(code);
+          }
         } else {
           if (addToast) addToast('error', 'QR Scan Failed', 'No valid pairing code found in QR image.');
         }
