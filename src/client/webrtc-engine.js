@@ -228,10 +228,9 @@
     }
 
     /**
-     * Universal SHA-256 implementation
+     * Universal SHA-256 implementation helper for fallback streaming
      */
-    _sha256(data) {
-      const bytes = data instanceof Uint8Array ? data : (typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data));
+    _getStreamingSHA256Class() {
       const K = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
         0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -243,179 +242,284 @@
         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
       ];
 
-      let H0 = 0x6a09e667, H1 = 0xbb67ae85, H2 = 0x3c6ef372, H3 = 0xa54ff53a;
-      let H4 = 0x510e527f, H5 = 0x9b05688c, H6 = 0x1f83d9ab, H7 = 0x5be0cd19;
-
-      const bitLen = bytes.length * 8;
-      const padLen = (((bytes.length + 8) >> 6) + 1) << 6;
-      const padded = new Uint8Array(padLen);
-      padded.set(bytes);
-      padded[bytes.length] = 0x80;
-      const view = new DataView(padded.buffer);
-      view.setUint32(padLen - 4, bitLen, false);
-
-      const W = new Uint32Array(64);
-
-      for (let i = 0; i < padLen; i += 64) {
-        for (let t = 0; t < 16; t++) {
-          W[t] = view.getUint32(i + t * 4, false);
-        }
-        for (let t = 16; t < 64; t++) {
-          const s0 = ((W[t-15] >>> 7) | (W[t-15] << 25)) ^ ((W[t-15] >>> 18) | (W[t-15] << 14)) ^ (W[t-15] >>> 3);
-          const s1 = ((W[t-2] >>> 17) | (W[t-2] << 15)) ^ ((W[t-2] >>> 19) | (W[t-2] << 13)) ^ (W[t-2] >>> 10);
-          W[t] = (W[t-16] + s0 + W[t-7] + s1) | 0;
+      return class StreamingSHA256 {
+        constructor() {
+          this.reset();
         }
 
-        let a = H0, b = H1, c = H2, d = H3, e = H4, f = H5, g = H6, h = H7;
-
-        for (let t = 0; t < 64; t++) {
-          const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-          const ch = (e & f) ^ (~e & g);
-          const temp1 = (h + S1 + ch + K[t] + W[t]) | 0;
-          const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-          const maj = (a & b) ^ (a & c) ^ (b & c);
-          const temp2 = (S0 + maj) | 0;
-
-          h = g; g = f; f = e; e = (d + temp1) | 0;
-          d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+        reset() {
+          this.H0 = 0x6a09e667; this.H1 = 0xbb67ae85; this.H2 = 0x3c6ef372; this.H3 = 0xa54ff53a;
+          this.H4 = 0x510e527f; this.H5 = 0x9b05688c; this.H6 = 0x1f83d9ab; this.H7 = 0x5be0cd19;
+          this.buffer = new Uint8Array(64);
+          this.bufferLen = 0;
+          this.totalBytes = 0;
+          this.W = new Uint32Array(64);
         }
 
-        H0 = (H0 + a) | 0; H1 = (H1 + b) | 0; H2 = (H2 + c) | 0; H3 = (H3 + d) | 0;
-        H4 = (H4 + e) | 0; H5 = (H5 + f) | 0; H6 = (H6 + g) | 0; H7 = (H7 + h) | 0;
-      }
+        _processBlock(blockBytes) {
+          const view = new DataView(blockBytes.buffer, blockBytes.byteOffset, 64);
+          const W = this.W;
+          for (let t = 0; t < 16; t++) {
+            W[t] = view.getUint32(t * 4, false);
+          }
+          for (let t = 16; t < 64; t++) {
+            const s0 = ((W[t-15] >>> 7) | (W[t-15] << 25)) ^ ((W[t-15] >>> 18) | (W[t-15] << 14)) ^ (W[t-15] >>> 3);
+            const s1 = ((W[t-2] >>> 17) | (W[t-2] << 15)) ^ ((W[t-2] >>> 19) | (W[t-2] << 13)) ^ (W[t-2] >>> 10);
+            W[t] = (W[t-16] + s0 + W[t-7] + s1) | 0;
+          }
 
+          let a = this.H0, b = this.H1, c = this.H2, d = this.H3;
+          let e = this.H4, f = this.H5, g = this.H6, h = this.H7;
+
+          for (let t = 0; t < 64; t++) {
+            const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+            const ch = (e & f) ^ (~e & g);
+            const temp1 = (h + S1 + ch + K[t] + W[t]) | 0;
+            const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const temp2 = (S0 + maj) | 0;
+
+            h = g; g = f; f = e; e = (d + temp1) | 0;
+            d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+          }
+
+          this.H0 = (this.H0 + a) | 0; this.H1 = (this.H1 + b) | 0;
+          this.H2 = (this.H2 + c) | 0; this.H3 = (this.H3 + d) | 0;
+          this.H4 = (this.H4 + e) | 0; this.H5 = (this.H5 + f) | 0;
+          this.H6 = (this.H6 + g) | 0; this.H7 = (this.H7 + h) | 0;
+        }
+
+        update(chunk) {
+          const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+          this.totalBytes += bytes.length;
+
+          let pos = 0;
+          if (this.bufferLen > 0) {
+            const needed = 64 - this.bufferLen;
+            const copy = Math.min(needed, bytes.length);
+            this.buffer.set(bytes.subarray(0, copy), this.bufferLen);
+            this.bufferLen += copy;
+            pos += copy;
+
+            if (this.bufferLen === 64) {
+              this._processBlock(this.buffer);
+              this.bufferLen = 0;
+            }
+          }
+
+          while (pos + 64 <= bytes.length) {
+            this._processBlock(bytes.subarray(pos, pos + 64));
+            pos += 64;
+          }
+
+          if (pos < bytes.length) {
+            const remaining = bytes.subarray(pos);
+            this.buffer.set(remaining, 0);
+            this.bufferLen = remaining.length;
+          }
+        }
+
+        digestHex() {
+          const totalBits = this.totalBytes * 8;
+          const padLen = (((this.bufferLen + 8) >> 6) + 1) << 6;
+          const padded = new Uint8Array(padLen);
+          padded.set(this.buffer.subarray(0, this.bufferLen));
+          padded[this.bufferLen] = 0x80;
+
+          const view = new DataView(padded.buffer);
+          const highBits = Math.floor(totalBits / 0x100000000);
+          const lowBits = totalBits % 0x100000000;
+          view.setUint32(padLen - 8, highBits, false);
+          view.setUint32(padLen - 4, lowBits, false);
+
+          for (let i = 0; i < padLen; i += 64) {
+            this._processBlock(padded.subarray(i, i + 64));
+          }
+
+          const out = new Uint8Array(32);
+          const outView = new DataView(out.buffer);
+          outView.setUint32(0, this.H0, false); outView.setUint32(4, this.H1, false);
+          outView.setUint32(8, this.H2, false); outView.setUint32(12, this.H3, false);
+          outView.setUint32(16, this.H4, false); outView.setUint32(20, this.H5, false);
+          outView.setUint32(24, this.H6, false); outView.setUint32(28, this.H7, false);
+
+          return Array.from(out).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+      };
+    }
+
+    _sha256(data) {
+      const hasherClass = this._getStreamingSHA256Class();
+      const hasher = new hasherClass();
+      const bytes = data instanceof Uint8Array ? data : (typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data));
+      hasher.update(bytes);
+      const hex = hasher.digestHex();
       const out = new Uint8Array(32);
-      const outView = new DataView(out.buffer);
-      outView.setUint32(0, H0, false); outView.setUint32(4, H1, false);
-      outView.setUint32(8, H2, false); outView.setUint32(12, H3, false);
-      outView.setUint32(16, H4, false); outView.setUint32(20, H5, false);
-      outView.setUint32(24, H6, false); outView.setUint32(28, H7, false);
+      for (let i = 0; i < 32; i++) {
+        out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+      }
       return out;
     }
 
     /**
-     * Derive 256-bit Key from Session Code / PIN and Salt
+     * Derive AES-GCM 256-bit CryptoKey from Session Code / PIN and Salt using PBKDF2 (100k iterations)
      */
     async deriveKey(sessionCode, salt) {
       const cleanCode = String(sessionCode || '').trim();
       if (!cleanCode) throw new Error('Missing session code for key derivation');
 
+      const cryptoObj = getCrypto();
       const encoder = new TextEncoder();
       const codeBytes = encoder.encode(cleanCode);
       const saltBytes = salt instanceof Uint8Array ? salt : (salt ? new Uint8Array(salt) : new Uint8Array(16));
 
-      const combined = new Uint8Array(codeBytes.length + saltBytes.length);
-      combined.set(codeBytes, 0);
-      combined.set(saltBytes, codeBytes.length);
+      const keyMaterial = await cryptoObj.subtle.importKey(
+        'raw',
+        codeBytes,
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+      );
 
-      return this._sha256(combined);
+      const derivedKey = await cryptoObj.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: saltBytes,
+          iterations: PBKDF2_ITERATIONS,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+
+      return derivedKey;
     }
 
     /**
-     * Encrypt a chunk ArrayBuffer using keystream cipher
-     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext]
+     * Encrypt a chunk ArrayBuffer using native AES-256-GCM via Web Crypto API
+     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext + 16B Auth Tag]
      */
-    async encryptChunk(chunkBuffer, chunkIndex, keyBytes) {
+    async encryptChunk(chunkBuffer, chunkIndex, key) {
       const cryptoObj = getCrypto();
       const iv = cryptoObj.getRandomValues(new Uint8Array(12));
 
-      const inputBytes = new Uint8Array(chunkBuffer);
-      const outputBytes = new Uint8Array(inputBytes.length);
+      const additionalData = new Uint8Array(4);
+      new DataView(additionalData.buffer).setUint32(0, chunkIndex, false);
 
-      // Fast keystream generation
-      const seed = new Uint8Array(32 + 12 + 4);
-      seed.set(keyBytes, 0);
-      seed.set(iv, 32);
-      const seedView = new DataView(seed.buffer);
-      seedView.setUint32(44, chunkIndex, false);
+      const ciphertextBuffer = await cryptoObj.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv, additionalData: additionalData },
+        key,
+        chunkBuffer
+      );
 
-      let keyStream = this._sha256(seed);
-      let ksPos = 0;
-
-      for (let i = 0; i < inputBytes.length; i++) {
-        if (ksPos >= 32) {
-          seedView.setUint32(44, (chunkIndex ^ (i >> 5)), false);
-          keyStream = this._sha256(seed);
-          ksPos = 0;
-        }
-        outputBytes[i] = inputBytes[i] ^ keyStream[ksPos++];
-      }
-
-      const frame = new Uint8Array(4 + 12 + outputBytes.byteLength);
+      const ciphertextBytes = new Uint8Array(ciphertextBuffer);
+      const frame = new Uint8Array(4 + 12 + ciphertextBytes.byteLength);
       const view = new DataView(frame.buffer);
       view.setUint32(0, chunkIndex, false);
       frame.set(iv, 4);
-      frame.set(outputBytes, 16);
+      frame.set(ciphertextBytes, 16);
       return frame;
     }
 
     /**
-     * Decrypt a chunk frame buffer using keystream cipher
+     * Decrypt a chunk frame buffer using native AES-256-GCM via Web Crypto API
      */
-    async decryptFrame(frameBuffer, keyBytes) {
+    async decryptFrame(frameBuffer, key) {
       const buffer = frameBuffer instanceof ArrayBuffer
         ? frameBuffer
         : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
 
-      if (buffer.byteLength < 16) {
+      if (buffer.byteLength < 32) {
         throw new Error('Invalid transfer frame: undersized payload');
       }
 
       const view = new DataView(buffer);
       const chunkIndex = view.getUint32(0, false);
       const iv = new Uint8Array(buffer, 4, 12);
-      const encryptedPayload = new Uint8Array(buffer, 16);
+      const ciphertext = new Uint8Array(buffer, 16);
 
-      const outputBytes = new Uint8Array(encryptedPayload.length);
+      const additionalData = new Uint8Array(4);
+      new DataView(additionalData.buffer).setUint32(0, chunkIndex, false);
 
-      const seed = new Uint8Array(32 + 12 + 4);
-      seed.set(keyBytes, 0);
-      seed.set(iv, 32);
-      const seedView = new DataView(seed.buffer);
-      seedView.setUint32(44, chunkIndex, false);
+      const cryptoObj = getCrypto();
+      const decryptedBuffer = await cryptoObj.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv, additionalData: additionalData },
+        key,
+        ciphertext
+      );
 
-      let keyStream = this._sha256(seed);
-      let ksPos = 0;
-
-      for (let i = 0; i < encryptedPayload.length; i++) {
-        if (ksPos >= 32) {
-          seedView.setUint32(44, (chunkIndex ^ (i >> 5)), false);
-          keyStream = this._sha256(seed);
-          ksPos = 0;
-        }
-        outputBytes[i] = encryptedPayload[i] ^ keyStream[ksPos++];
-      }
-
-      return { chunkIndex, chunkData: outputBytes.buffer };
+      return { chunkIndex, chunkData: decryptedBuffer };
     }
 
     /**
-     * Off-main-thread SHA-256 file hashing
+     * Off-main-thread streaming SHA-256 file hashing via hash-worker.js with streaming fallback
      */
     async _computeHash(payload) {
+      if (typeof Worker !== 'undefined' && (payload instanceof Blob || (typeof File !== 'undefined' && payload instanceof File))) {
+        try {
+          const workerPath = '/hash-worker.js';
+          const worker = new Worker(workerPath);
+          const hashResult = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              try { worker.terminate(); } catch (_) {}
+              reject(new Error('Hash worker timeout'));
+            }, 30000);
+            worker.onmessage = (e) => {
+              if (e.data?.type === 'complete') {
+                clearTimeout(timer);
+                try { worker.terminate(); } catch (_) {}
+                resolve(e.data.hash);
+              } else if (e.data?.type === 'error') {
+                clearTimeout(timer);
+                try { worker.terminate(); } catch (_) {}
+                reject(new Error(e.data.message));
+              }
+            };
+            worker.postMessage({ type: 'hash-file', file: payload });
+          });
+          return hashResult;
+        } catch (_) {
+          // Fallback if worker creation fails (e.g. cross-origin/sandbox)
+        }
+      }
+
       return await this._canonicalHashFallback(payload);
     }
 
     async _canonicalHashFallback(fileOrChunks) {
-      if (fileOrChunks instanceof Blob) {
-        const arrayBuf = await fileOrChunks.arrayBuffer();
-        const hashBytes = this._sha256(new Uint8Array(arrayBuf));
-        return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      if (fileOrChunks instanceof Blob || (typeof File !== 'undefined' && fileOrChunks instanceof File)) {
+        const chunkSize = 1024 * 1024; // 1 MB streaming slices
+        let offset = 0;
+        const total = fileOrChunks.size;
+
+        if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function' && total <= chunkSize) {
+          const buf = await fileOrChunks.arrayBuffer();
+          const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+          return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        const hasherClass = this._getStreamingSHA256Class();
+        const hasher = new hasherClass();
+        while (offset < total) {
+          const slice = fileOrChunks.slice(offset, Math.min(offset + chunkSize, total));
+          const buf = await slice.arrayBuffer();
+          hasher.update(new Uint8Array(buf));
+          offset += buf.byteLength;
+        }
+        return hasher.digestHex();
       }
 
       if (Array.isArray(fileOrChunks)) {
-        let totalLen = 0;
-        for (let c of fileOrChunks) if (c) totalLen += c.byteLength || 0;
-        const combined = new Uint8Array(totalLen);
-        let pos = 0;
+        const hasherClass = this._getStreamingSHA256Class();
+        const hasher = new hasherClass();
         for (let c of fileOrChunks) {
           if (!c) continue;
           const arr = ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : new Uint8Array(c);
-          combined.set(arr, pos);
-          pos += arr.byteLength;
+          hasher.update(arr);
         }
-        const hashBytes = this._sha256(combined);
-        return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+        return hasher.digestHex();
       }
 
       return `hash_${Date.now()}`;
@@ -774,8 +878,39 @@
               return;
             }
 
-            // Init Memory Storage for Receiver
-            this.memoryChunks = new Array(msg.totalChunks);
+            // OPFS Storage Initialization or Memory Storage Fallback
+            this.opfsActive = false;
+            if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function' && typeof Worker !== 'undefined') {
+              try {
+                const workerPath = '/opfs-writer-worker.js';
+                const worker = new Worker(workerPath);
+                const isInitialized = await new Promise((resolve) => {
+                  const timer = setTimeout(() => resolve(false), 2000);
+                  worker.onmessage = (e) => {
+                    if (e.data?.type === 'init-ack') {
+                      clearTimeout(timer);
+                      resolve(true);
+                    } else if (e.data?.type === 'error') {
+                      clearTimeout(timer);
+                      resolve(false);
+                    }
+                  };
+                  worker.postMessage({ type: 'init', fileName: msg.name, totalSize: msg.size });
+                });
+                if (isInitialized) {
+                  this.opfsWorker = worker;
+                  this.opfsActive = true;
+                } else {
+                  try { worker.terminate(); } catch (_) {}
+                }
+              } catch (_) {
+                this.opfsActive = false;
+              }
+            }
+
+            if (!this.opfsActive) {
+              this.memoryChunks = new Array(msg.totalChunks);
+            }
 
             this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
             this.onFileMetadata(msg);
@@ -830,8 +965,13 @@
           return;
         }
 
-        if (!this.memoryChunks) this.memoryChunks = new Array(meta.totalChunks);
-        this.memoryChunks[chunkIndex] = chunkData;
+        if (this.opfsActive && this.opfsWorker) {
+          const offset = chunkIndex * meta.chunkSize;
+          this.opfsWorker.postMessage({ type: 'write', chunkIndex, offset, buffer: chunkData }, [chunkData]);
+        } else {
+          if (!this.memoryChunks) this.memoryChunks = new Array(meta.totalChunks);
+          this.memoryChunks[chunkIndex] = chunkData;
+        }
 
         this.receivedChunksCount += 1;
         this.receivedBytes += chunkData.byteLength;
@@ -875,13 +1015,32 @@
       this.incomingMeta = null;
 
       try {
-        const chunks = this.memoryChunks || [];
-        for (let i = 0; i < chunks.length; i++) {
-          if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
+        let fileObj;
+        if (this.opfsActive && this.opfsWorker) {
+          fileObj = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('OPFS worker finalize timed out')), 5000);
+            this.opfsWorker.onmessage = (e) => {
+              if (e.data?.type === 'finalize-ack') {
+                clearTimeout(timer);
+                resolve(e.data.file);
+              } else if (e.data?.type === 'error') {
+                clearTimeout(timer);
+                reject(new Error(e.data.message));
+              }
+            };
+            this.opfsWorker.postMessage({ type: 'finalize' });
+          });
+          try { this.opfsWorker.terminate(); } catch (_) {}
+          this.opfsWorker = null;
+          this.opfsActive = false;
+        } else {
+          const chunks = this.memoryChunks || [];
+          for (let i = 0; i < chunks.length; i++) {
+            if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
+          }
+          fileObj = new Blob(chunks, { type: meta.mimeType || 'application/octet-stream' });
+          this.memoryChunks = null;
         }
-
-        const fileObj = new Blob(chunks, { type: meta.mimeType || 'application/octet-stream' });
-        this.memoryChunks = null;
 
         // SHA-256 Integrity Verification
         this.onStatusChange('Verifying SHA-256 file integrity checksum…', 'info');
@@ -907,6 +1066,14 @@
 
     _cleanupReceiverStorage(deleteFile = false) {
       this.memoryChunks = null;
+      if (this.opfsWorker) {
+        if (deleteFile) {
+          try { this.opfsWorker.postMessage({ type: 'abort' }); } catch (_) {}
+        }
+        try { this.opfsWorker.terminate(); } catch (_) {}
+        this.opfsWorker = null;
+      }
+      this.opfsActive = false;
     }
 
     /**
@@ -960,6 +1127,8 @@
       // Send Metadata Header
       const metadata = {
         type: 'metadata',
+        v: 2,
+        cipher: 'AES-256-GCM',
         name: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
@@ -1185,6 +1354,10 @@
   }
 
   // Export
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = FluxWebRTCEngine;
+    module.exports.default = FluxWebRTCEngine;
+  }
   if (typeof globalThis !== 'undefined') {
     globalThis.FluxWebRTCEngine = FluxWebRTCEngine;
   }
@@ -1193,7 +1366,7 @@
   }
 })(typeof window !== 'undefined' ? window : globalThis);
 
-export default (typeof window !== 'undefined' && window.FluxWebRTCEngine) || (typeof globalThis !== 'undefined' && globalThis.FluxWebRTCEngine);
+export default (typeof window !== 'undefined' && window.FluxWebRTCEngine) || (typeof globalThis !== 'undefined' && globalThis.FluxWebRTCEngine) || FluxWebRTCEngine;
 
 
 

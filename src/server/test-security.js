@@ -13,7 +13,8 @@
  */
 
 const { webcrypto } = require('crypto');
-const FluxWebRTCEngine = require('../client/webrtc-engine.js');
+const RawEngine = require('../client/webrtc-engine.js');
+const FluxWebRTCEngine = RawEngine.default || RawEngine;
 
 let passed = 0;
 let failed = 0;
