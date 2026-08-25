@@ -18,7 +18,8 @@ const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = process.env.PORT || 8080;
-const STATIC_DIR = path.join(__dirname, '..', 'client');
+const distDir = path.join(__dirname, '..', '..', 'dist');
+const STATIC_DIR = fs.existsSync(distDir) ? distDir : path.join(__dirname, '..', 'client');
 
 // ─── MIME Types ───────────────────────────────────────────────────────────────
 const MIME = {
