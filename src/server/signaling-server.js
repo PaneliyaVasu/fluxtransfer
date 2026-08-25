@@ -143,10 +143,16 @@ function checkIpRateLimit(ip) {
   return entry.count <= IP_JOIN_LIMIT_PER_MIN;
 }
 
-// ─── WebSocket Server (upgrade on same HTTP server) ───────────────────────────
+// ─── WebSocket Server (explicit upgrade handler for reverse proxies like Render) ───
 const wss = new WebSocketServer({
-  server,
+  noServer: true,
   maxPayload: MAX_MESSAGE_SIZE_BYTES
+});
+
+server.on('upgrade', (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
 });
 
 function send(ws, data) {
@@ -352,9 +358,9 @@ const pingInterval = setInterval(() => {
 wss.on('close', () => clearInterval(pingInterval));
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`\n🚀 FluxTransfer running on http://localhost:${PORT}`);
-  console.log(`📡 WebSocket signaling at ws://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🚀 FluxTransfer running on http://0.0.0.0:${PORT}`);
+  console.log(`📡 WebSocket signaling ready on port ${PORT}`);
   console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
 });
 
