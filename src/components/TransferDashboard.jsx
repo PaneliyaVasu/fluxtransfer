@@ -258,7 +258,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               color: '#7c3aed',
               display: 'flex',
               alignItems: 'center',
-              justify: 'center',
+              justifyContent: 'center',
               flexShrink: 0
             }}
           >
@@ -267,13 +267,15 @@ export default function TransferDashboard({ transfer, addToast }) {
 
           {/* Name, Byte Counter, and Live Speed */}
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '3px' }}>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '4px' }}>
               {selectedFile?.name || receivedFileName || 'Incoming File'}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              <span>{formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFile?.size || 0)}</span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', gap: '8px' }}>
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFile?.size || 0)}
+              </span>
               {engineState === 'transferring' && (
-                <span style={{ fontWeight: 600, color: '#7c3aed' }}>⚡ {transferSpeed}</span>
+                <span style={{ fontWeight: 700, color: '#7c3aed', flexShrink: 0 }}>⚡ {transferSpeed}</span>
               )}
             </div>
           </div>
@@ -286,28 +288,49 @@ export default function TransferDashboard({ transfer, addToast }) {
           <button
             onClick={handleDownloadFile}
             className="glass-btn glass-btn-dark"
-            style={{ flex: 1, height: '44px', textDecoration: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer' }}
+            style={{
+              flex: 1,
+              height: '46px',
+              padding: '0 16px',
+              borderRadius: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              fontSize: '0.88rem',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              cursor: 'pointer'
+            }}
           >
-            Download File <Download size={16} />
+            Download File <Download size={15} />
           </button>
         )}
         <button
           onClick={handleCancel}
           className="glass-btn"
-          style={{ flex: receivedFileUrl ? '0' : '1', height: '44px', fontSize: '0.88rem', fontWeight: 600, opacity: 0.9 }}
+          style={{
+            flex: receivedFileUrl ? '0 0 80px' : 1,
+            height: '46px',
+            padding: '0 12px',
+            borderRadius: '14px',
+            fontSize: '0.88rem',
+            fontWeight: 600,
+            whiteSpace: 'nowrap',
+            opacity: 0.85,
+            cursor: 'pointer'
+          }}
         >
           {isCompleted ? 'Close' : 'Cancel'}
         </button>
       </div>
     </div>
-  );
-
-  return (
+  );  return (
     <div style={{ position: 'relative', zIndex: 30, maxWidth: '750px', width: '100%', margin: '0 auto' }}>
       {/* Top 2-Column Grid: Send Files (Left) & Receive Files (Right) */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'clamp(12px, 1.8vw, 20px)', marginBottom: 'clamp(12px, 1.8vh, 20px)' }}>
         {/* Left Card — Send Files */}
-        <div className="glass-card" style={{ padding: 'clamp(16px, 2.2vh, 24px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="glass-card" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
           {/* Card Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -336,7 +359,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                   padding: 0,
                   display: 'flex',
                   alignItems: 'center',
-                  justify: 'center',
+                  justifyContent: 'center',
                   cursor: 'pointer',
                   border: '1px solid var(--glass-card-border)',
                   background: 'var(--glass-card-bg)',
@@ -363,7 +386,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               style={{
                 border: isDragOver ? '2px dashed #7c3aed' : '1px dashed rgba(168, 85, 247, 0.35)',
                 borderRadius: '20px',
-                padding: '28px 20px',
+                padding: '30px 20px',
                 textAlign: 'center',
                 background: isDragOver ? 'rgba(124, 58, 237, 0.08)' : 'var(--dropzone-bg, rgba(255, 255, 255, 0.45))',
                 transition: 'all 0.25s ease',
@@ -390,12 +413,12 @@ export default function TransferDashboard({ transfer, addToast }) {
             </div>
           ) : (
             /* Selected File: 6-Digit Code (Above) + QR Code (Below) */
-            <div style={{ background: 'var(--glass-card-bg)', padding: '20px 14px', borderRadius: '16px', border: '1px solid var(--glass-card-border)', textAlign: 'center' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'var(--glass-card-bg)', padding: '20px 14px', borderRadius: '16px', border: '1px solid var(--glass-card-border)', textAlign: 'center' }}>
               <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>
                 6-DIGIT PAIRING CODE
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: '14px' }}>
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '0 auto' }}>
                   {(pairingCode || '------').split('').map((digit, idx) => (
                     <div
@@ -419,7 +442,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                   boxShadow: '0 8px 24px rgba(124, 58, 237, 0.12)',
                   display: 'flex',
                   alignItems: 'center',
-                  justify: 'center'
+                  justifyContent: 'center'
                 }}
               >
                 <QRCodeSVG
@@ -435,7 +458,7 @@ export default function TransferDashboard({ transfer, addToast }) {
         </div>
 
         {/* Right Card — Receive Files */}
-        <div className="glass-card" style={{ padding: 'clamp(16px, 2.2vh, 24px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="glass-card" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
           {/* Card Header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
             <div className="icon-pill icon-pill-emerald">
@@ -457,7 +480,7 @@ export default function TransferDashboard({ transfer, addToast }) {
           ) : (
             <>
               {/* 6-Digit Slot PIN Inputs */}
-              <div style={{ marginTop: '30px', marginBottom: '35px', width: '100%', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ marginTop: '16px', marginBottom: '24px', width: '100%', display: 'flex', justifyContent: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', width: '100%', margin: '0 auto' }} onPaste={handleDigitPaste}>
                   {[0, 1, 2, 3, 4, 5].map((idx) => {
                     const char = (inputCode[idx] && inputCode[idx] !== ' ') ? inputCode[idx] : '';
@@ -480,20 +503,20 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
 
               {/* Bottom Action Row */}
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: 'auto' }}>
                 <button
                   onClick={handleJoinSession}
                   className="glass-btn glass-btn-dark"
                   style={{
                     flex: 1,
-                    height: '52px',
+                    height: '50px',
                     padding: '0 20px',
                     borderRadius: '14px',
                     fontSize: '0.98rem',
                     fontWeight: 600,
                     display: 'flex',
                     alignItems: 'center',
-                    justify: 'center',
+                    justifyContent: 'center',
                     gap: '8px'
                   }}
                 >

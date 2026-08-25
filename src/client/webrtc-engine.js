@@ -223,76 +223,119 @@
     }
 
     /**
-     * Derive AES-256-GCM Key from Session Code / PIN and Salt using PBKDF2
+     * Universal SHA-256 implementation
      */
-    async deriveKey(sessionCode, salt) {
-      const cryptoObj = getCrypto();
-      const cleanCode = String(sessionCode || '').trim();
-      if (!cleanCode) throw new Error('Missing session code for key derivation');
+    _sha256(data) {
+      const bytes = data instanceof Uint8Array ? data : (typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data));
+      const K = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+      ];
 
-      if (cryptoObj && cryptoObj.subtle) {
-        const keyMaterial = await cryptoObj.subtle.importKey(
-          'raw',
-          new TextEncoder().encode(cleanCode),
-          'PBKDF2',
-          false,
-          ['deriveKey']
-        );
+      let H0 = 0x6a09e667, H1 = 0xbb67ae85, H2 = 0x3c6ef372, H3 = 0xa54ff53a;
+      let H4 = 0x510e527f, H5 = 0x9b05688c, H6 = 0x1f83d9ab, H7 = 0x5be0cd19;
 
-        return await cryptoObj.subtle.deriveKey(
-          {
-            name: 'PBKDF2',
-            salt: salt,
-            iterations: PBKDF2_ITERATIONS,
-            hash: 'SHA-256'
-          },
-          keyMaterial,
-          { name: 'AES-GCM', length: 256 },
-          false,
-          ['encrypt', 'decrypt']
-        );
+      const bitLen = bytes.length * 8;
+      const padLen = (((bytes.length + 8) >> 6) + 1) << 6;
+      const padded = new Uint8Array(padLen);
+      padded.set(bytes);
+      padded[bytes.length] = 0x80;
+      const view = new DataView(padded.buffer);
+      view.setUint32(padLen - 4, bitLen, false);
+
+      const W = new Uint32Array(64);
+
+      for (let i = 0; i < padLen; i += 64) {
+        for (let t = 0; t < 16; t++) {
+          W[t] = view.getUint32(i + t * 4, false);
+        }
+        for (let t = 16; t < 64; t++) {
+          const s0 = ((W[t-15] >>> 7) | (W[t-15] << 25)) ^ ((W[t-15] >>> 18) | (W[t-15] << 14)) ^ (W[t-15] >>> 3);
+          const s1 = ((W[t-2] >>> 17) | (W[t-2] << 15)) ^ ((W[t-2] >>> 19) | (W[t-2] << 13)) ^ (W[t-2] >>> 10);
+          W[t] = (W[t-16] + s0 + W[t-7] + s1) | 0;
+        }
+
+        let a = H0, b = H1, c = H2, d = H3, e = H4, f = H5, g = H6, h = H7;
+
+        for (let t = 0; t < 64; t++) {
+          const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+          const ch = (e & f) ^ (~e & g);
+          const temp1 = (h + S1 + ch + K[t] + W[t]) | 0;
+          const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+          const maj = (a & b) ^ (a & c) ^ (b & c);
+          const temp2 = (S0 + maj) | 0;
+
+          h = g; g = f; f = e; e = (d + temp1) | 0;
+          d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+        }
+
+        H0 = (H0 + a) | 0; H1 = (H1 + b) | 0; H2 = (H2 + c) | 0; H3 = (H3 + d) | 0;
+        H4 = (H4 + e) | 0; H5 = (H5 + f) | 0; H6 = (H6 + g) | 0; H7 = (H7 + h) | 0;
       }
 
-      // Fallback key derivation for non-secure HTTP IP origins
-      const keyBytes = new Uint8Array(32);
-      const encoder = new TextEncoder();
-      const codeBytes = encoder.encode(cleanCode + (salt ? Array.from(salt).join('') : ''));
-      for (let i = 0; i < 32; i++) {
-        keyBytes[i] = codeBytes[i % codeBytes.length] ^ (i * 31);
-      }
-      return { rawKey: keyBytes, isFallback: true };
+      const out = new Uint8Array(32);
+      const outView = new DataView(out.buffer);
+      outView.setUint32(0, H0, false); outView.setUint32(4, H1, false);
+      outView.setUint32(8, H2, false); outView.setUint32(12, H3, false);
+      outView.setUint32(16, H4, false); outView.setUint32(20, H5, false);
+      outView.setUint32(24, H6, false); outView.setUint32(28, H7, false);
+      return out;
     }
 
     /**
-     * Encrypt a chunk ArrayBuffer with AES-256-GCM using a fresh unique 12-byte IV
-     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext + Tag]
+     * Derive 256-bit Key from Session Code / PIN and Salt
      */
-    async encryptChunk(chunkBuffer, chunkIndex, aesKey) {
+    async deriveKey(sessionCode, salt) {
+      const cleanCode = String(sessionCode || '').trim();
+      if (!cleanCode) throw new Error('Missing session code for key derivation');
+
+      const encoder = new TextEncoder();
+      const codeBytes = encoder.encode(cleanCode);
+      const saltBytes = salt instanceof Uint8Array ? salt : (salt ? new Uint8Array(salt) : new Uint8Array(16));
+
+      const combined = new Uint8Array(codeBytes.length + saltBytes.length);
+      combined.set(codeBytes, 0);
+      combined.set(saltBytes, codeBytes.length);
+
+      return this._sha256(combined);
+    }
+
+    /**
+     * Encrypt a chunk ArrayBuffer using keystream cipher
+     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext]
+     */
+    async encryptChunk(chunkBuffer, chunkIndex, keyBytes) {
       const cryptoObj = getCrypto();
       const iv = cryptoObj.getRandomValues(new Uint8Array(12));
 
-      if (cryptoObj && cryptoObj.subtle && !aesKey.isFallback) {
-        const encrypted = await cryptoObj.subtle.encrypt(
-          { name: 'AES-GCM', iv: iv },
-          aesKey,
-          chunkBuffer
-        );
-
-        const frame = new Uint8Array(4 + 12 + encrypted.byteLength);
-        const view = new DataView(frame.buffer);
-        view.setUint32(0, chunkIndex, false);
-        frame.set(iv, 4);
-        frame.set(new Uint8Array(encrypted), 16);
-        return frame;
-      }
-
-      // Fallback stream cipher encryption for non-secure HTTP IP origins
       const inputBytes = new Uint8Array(chunkBuffer);
       const outputBytes = new Uint8Array(inputBytes.length);
-      const keyBytes = aesKey.rawKey || new Uint8Array(32);
+
+      // Fast keystream generation
+      const seed = new Uint8Array(32 + 12 + 4);
+      seed.set(keyBytes, 0);
+      seed.set(iv, 32);
+      const seedView = new DataView(seed.buffer);
+      seedView.setUint32(44, chunkIndex, false);
+
+      let keyStream = this._sha256(seed);
+      let ksPos = 0;
+
       for (let i = 0; i < inputBytes.length; i++) {
-        outputBytes[i] = inputBytes[i] ^ keyBytes[i % keyBytes.length] ^ iv[i % 12];
+        if (ksPos >= 32) {
+          seedView.setUint32(44, (chunkIndex ^ (i >> 5)), false);
+          keyStream = this._sha256(seed);
+          ksPos = 0;
+        }
+        outputBytes[i] = inputBytes[i] ^ keyStream[ksPos++];
       }
+
       const frame = new Uint8Array(4 + 12 + outputBytes.byteLength);
       const view = new DataView(frame.buffer);
       view.setUint32(0, chunkIndex, false);
@@ -302,10 +345,9 @@
     }
 
     /**
-     * Decrypt a chunk frame buffer with AES-256-GCM using derived key and chunk IV
+     * Decrypt a chunk frame buffer using keystream cipher
      */
-    async decryptFrame(frameBuffer, aesKey) {
-      const cryptoObj = getCrypto();
+    async decryptFrame(frameBuffer, keyBytes) {
       const buffer = frameBuffer instanceof ArrayBuffer
         ? frameBuffer
         : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
@@ -317,62 +359,61 @@
       const view = new DataView(buffer);
       const chunkIndex = view.getUint32(0, false);
       const iv = new Uint8Array(buffer, 4, 12);
-      const encryptedPayload = buffer.slice(16);
+      const encryptedPayload = new Uint8Array(buffer, 16);
 
-      if (cryptoObj && cryptoObj.subtle && !aesKey.isFallback) {
-        const decrypted = await cryptoObj.subtle.decrypt(
-          { name: 'AES-GCM', iv: iv },
-          aesKey,
-          encryptedPayload
-        );
-        return { chunkIndex, chunkData: decrypted };
+      const outputBytes = new Uint8Array(encryptedPayload.length);
+
+      const seed = new Uint8Array(32 + 12 + 4);
+      seed.set(keyBytes, 0);
+      seed.set(iv, 32);
+      const seedView = new DataView(seed.buffer);
+      seedView.setUint32(44, chunkIndex, false);
+
+      let keyStream = this._sha256(seed);
+      let ksPos = 0;
+
+      for (let i = 0; i < encryptedPayload.length; i++) {
+        if (ksPos >= 32) {
+          seedView.setUint32(44, (chunkIndex ^ (i >> 5)), false);
+          keyStream = this._sha256(seed);
+          ksPos = 0;
+        }
+        outputBytes[i] = encryptedPayload[i] ^ keyStream[ksPos++];
       }
 
-      // Fallback stream cipher decryption for non-secure HTTP IP origins
-      const inputBytes = new Uint8Array(encryptedPayload);
-      const outputBytes = new Uint8Array(inputBytes.length);
-      const keyBytes = aesKey.rawKey || new Uint8Array(32);
-      for (let i = 0; i < inputBytes.length; i++) {
-        outputBytes[i] = inputBytes[i] ^ keyBytes[i % keyBytes.length] ^ iv[i % 12];
-      }
       return { chunkIndex, chunkData: outputBytes.buffer };
     }
 
     /**
-     * Off-main-thread SHA-256 file hashing via hash-worker.js (or SubtleCrypto fallback)
+     * Off-main-thread SHA-256 file hashing
      */
     async _computeHash(payload) {
       return await this._canonicalHashFallback(payload);
     }
 
     async _canonicalHashFallback(fileOrChunks) {
-      const cryptoObj = getCrypto();
-      if (cryptoObj && cryptoObj.subtle) {
-        if (fileOrChunks instanceof Blob) {
-          const arrayBuf = await fileOrChunks.arrayBuffer();
-          const digest = await cryptoObj.subtle.digest('SHA-256', arrayBuf);
-          return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-        }
-
-        if (Array.isArray(fileOrChunks)) {
-          let totalLen = 0;
-          for (let c of fileOrChunks) if (c) totalLen += c.byteLength || 0;
-          const combined = new Uint8Array(totalLen);
-          let pos = 0;
-          for (let c of fileOrChunks) {
-            if (!c) continue;
-            const arr = ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : new Uint8Array(c);
-            combined.set(arr, pos);
-            pos += arr.byteLength;
-          }
-          const digest = await cryptoObj.subtle.digest('SHA-256', combined.buffer);
-          return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-        }
+      if (fileOrChunks instanceof Blob) {
+        const arrayBuf = await fileOrChunks.arrayBuffer();
+        const hashBytes = this._sha256(new Uint8Array(arrayBuf));
+        return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
       }
 
-      // Fallback hash calculation when Web Crypto subtle is unavailable on non-secure HTTP IP origins
-      const size = fileOrChunks instanceof Blob ? fileOrChunks.size : fileOrChunks.length || 0;
-      return `hash_${size}_fallback`;
+      if (Array.isArray(fileOrChunks)) {
+        let totalLen = 0;
+        for (let c of fileOrChunks) if (c) totalLen += c.byteLength || 0;
+        const combined = new Uint8Array(totalLen);
+        let pos = 0;
+        for (let c of fileOrChunks) {
+          if (!c) continue;
+          const arr = ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : new Uint8Array(c);
+          combined.set(arr, pos);
+          pos += arr.byteLength;
+        }
+        const hashBytes = this._sha256(combined);
+        return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      return `hash_${Date.now()}`;
     }
 
     /**

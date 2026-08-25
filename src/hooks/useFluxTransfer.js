@@ -28,7 +28,7 @@ export function useFluxTransfer() {
     // Register event listeners
     engine.on('stateChange', (state) => {
       setEngineState(state);
-      if (state === 'connected' && selectedFileRef.current && !engine.isTransferring) {
+      if (state === 'connected' && selectedFileRef.current && !engine.isTransferring && engine.dataChannel && engine.dataChannel.readyState === 'open') {
         engine.sendFile(selectedFileRef.current);
       }
     });
