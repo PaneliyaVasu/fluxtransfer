@@ -175,6 +175,10 @@
     }
 
     _setState(state, extraInfo = {}) {
+      if (this.transferState === 'completed' && (state === 'failed' || state === 'idle' || state === 'connecting' || state === 'connected')) {
+        console.log(`[WebRTC Engine] Suppressing state transition to ${state} because transfer is already completed.`);
+        return;
+      }
       this.transferState = state;
       console.log(`[WebRTC Engine] State transition -> ${state}`);
       if (typeof this._onStateChangeCb === 'function') {
@@ -459,6 +463,7 @@
       };
 
       this.ws.onerror = () => {
+        if (this.transferState === 'completed') return;
         if (!this._hasTriedFallback && typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:') {
           this._hasTriedFallback = true;
           const altUrl = this.signalingUrl.includes(':8080')
@@ -977,7 +982,13 @@
 
       while (offset < file.size && this.isTransferring) {
         if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
-          await this._waitForBufferLow();
+          try {
+            await this._waitForBufferLow();
+          } catch (bufErr) {
+            if (this.transferState === 'completed' || !this.isTransferring) {
+              break;
+            }
+          }
         }
 
         const slice = file.slice(offset, offset + chunkSize);
@@ -1036,10 +1047,10 @@
 
     /**
      * Event-driven Backpressure wait. Resolves ONLY when bufferedAmount <= BUFFER_LOW_WATERMARK.
-     * Rejects immediately if DataChannel closes or transfer is cancelled.
+     * Rejects gracefully if DataChannel closes or transfer is cancelled.
      */
     _waitForBufferLow() {
-      if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
+      if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK || this.transferState === 'completed') {
         return Promise.resolve();
       }
       return new Promise((resolve, reject) => {
@@ -1052,12 +1063,16 @@
 
         const done = () => {
           cleanup();
+          if (this.transferState === 'completed') {
+            resolve();
+            return;
+          }
           if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-            reject(new Error('DataChannel closed while waiting for backpressure buffer'));
+            resolve();
             return;
           }
           if (!this.isTransferring) {
-            reject(new Error('Transfer cancelled while waiting for backpressure buffer'));
+            resolve();
             return;
           }
           resolve();
@@ -1072,7 +1087,7 @@
         }
 
         checkTimer = setInterval(() => {
-          if (!this.dataChannel || this.dataChannel.readyState !== 'open' || !this.isTransferring) {
+          if (!this.dataChannel || this.dataChannel.readyState !== 'open' || !this.isTransferring || this.transferState === 'completed') {
             done();
           } else if (this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK) {
             done();
@@ -1103,6 +1118,7 @@
     }
 
     _handlePeerDisconnect(reason) {
+      if (this.transferState === 'completed') return;
       if (this.isTransferring) {
         this._cleanupReceiverStorage(true);
         this._handleTransferFailure(`Transfer aborted: ${reason}`, 'ERR_PEER_DISCONNECTED');
@@ -1110,6 +1126,7 @@
     }
 
     _handleTransferFailure(errorMessage, errorCode) {
+      if (this.transferState === 'completed') return;
       this.isTransferring = false;
       this._setState('failed');
       this.onError(errorMessage, errorCode);

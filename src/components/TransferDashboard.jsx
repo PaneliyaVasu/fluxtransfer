@@ -1,12 +1,61 @@
 import React, { useState } from 'react';
 import { Upload, Download, ArrowRight, QrCode, FileText, Check, Copy, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import jsQR from 'jsqr';
 
 export default function TransferDashboard({ transfer, addToast }) {
   const [inputCode, setInputCode] = useState('');
   const [isCopied, setIsCopied] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+
+  const qrInputRef = React.useRef(null);
+
+  const handleQrScanClick = () => {
+    if (qrInputRef.current) {
+      qrInputRef.current.value = '';
+      qrInputRef.current.click();
+    }
+  };
+
+  const handleQrFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = jsQR(imageData.data, imageData.width, imageData.height);
+
+      if (result && result.data) {
+        const raw = result.data;
+        // Extract code from URL (?code=XXXXXX) or use raw if it's a 6-digit number
+        const urlMatch = raw.match(/[?&]code=(\d{6})/);
+        const code = urlMatch ? urlMatch[1] : (raw.match(/^\d{6}$/) ? raw : null);
+
+        if (code) {
+          setInputCode(code);
+          // Auto-fill digit refs
+          code.split('').forEach((digit, idx) => {
+            if (digitRefs[idx]?.current) digitRefs[idx].current.value = digit;
+          });
+          if (addToast) addToast('success', 'QR Code Scanned', `Code ${code} found! Tap Receive to connect.`);
+        } else {
+          if (addToast) addToast('error', 'QR Scan Failed', 'No valid pairing code found in QR image.');
+        }
+      } else {
+        if (addToast) addToast('error', 'QR Scan Failed', 'Could not detect a QR code in the image. Try a clearer photo.');
+      }
+    } catch (err) {
+      console.error('[QR Scanner]', err);
+      if (addToast) addToast('error', 'QR Scan Error', 'Failed to read image. Please try again.');
+    }
+  };
 
   const digitRefs = [
     React.useRef(null),
@@ -185,7 +234,7 @@ export default function TransferDashboard({ transfer, addToast }) {
   };
 
   const isTransferActive = engineState === 'transferring' || engineState === 'completed' || selectedFile;
-  const isCompleted = engineState === 'completed';
+  const isCompleted = engineState === 'completed' || transferProgress === 100;
   const isSending = role === 'sender' || Boolean(selectedFile);
   const isReceiving = role === 'receiver' || Boolean(receivedFileUrl) || (engineState !== 'idle' && !selectedFile);
 
@@ -211,21 +260,63 @@ export default function TransferDashboard({ transfer, addToast }) {
               Transfer Progress
             </h4>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              {isSending ? 'Sending file to peer' : 'Receiving file from peer'}
+              {isCompleted
+                ? (isSending ? 'File sent successfully to peer' : 'File received successfully')
+                : (isSending ? 'Sending file to peer' : 'Receiving file from peer')}
             </div>
           </div>
-          <span className="status-badge" style={{ fontSize: '0.75rem', padding: '5px 12px', borderRadius: '999px' }}>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              padding: '4px 12px',
+              borderRadius: '999px',
+              whiteSpace: 'nowrap',
+              background: isCompleted
+                ? 'rgba(16, 185, 129, 0.12)'
+                : engineState === 'transferring'
+                ? 'rgba(124, 58, 237, 0.12)'
+                : engineState === 'connecting'
+                ? 'rgba(245, 158, 11, 0.12)'
+                : selectedFile
+                ? 'rgba(59, 130, 246, 0.12)'
+                : 'rgba(148, 163, 184, 0.12)',
+              color: isCompleted
+                ? '#10b981'
+                : engineState === 'transferring'
+                ? '#7c3aed'
+                : engineState === 'connecting'
+                ? '#d97706'
+                : selectedFile
+                ? '#3b82f6'
+                : '#64748b',
+              border: `1px solid ${
+                isCompleted
+                  ? 'rgba(16, 185, 129, 0.3)'
+                  : engineState === 'transferring'
+                  ? 'rgba(124, 58, 237, 0.3)'
+                  : engineState === 'connecting'
+                  ? 'rgba(245, 158, 11, 0.3)'
+                  : selectedFile
+                  ? 'rgba(59, 130, 246, 0.3)'
+                  : 'rgba(148, 163, 184, 0.3)'
+              }`
+            }}
+          >
             <span
-              className="status-badge-dot"
               style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
                 backgroundColor: isCompleted
                   ? '#10b981'
                   : engineState === 'transferring'
                   ? '#7c3aed'
                   : engineState === 'connecting'
                   ? '#f59e0b'
-                  : engineState === 'failed'
-                  ? '#ef4444'
                   : selectedFile
                   ? '#3b82f6'
                   : '#94a3b8'
@@ -237,8 +328,6 @@ export default function TransferDashboard({ transfer, addToast }) {
               ? `${transferProgress}% Transferring`
               : engineState === 'connecting'
               ? 'Connecting...'
-              : engineState === 'failed'
-              ? 'Failed'
               : selectedFile
               ? 'Ready for Receiver'
               : 'Idle'}
@@ -306,7 +395,7 @@ export default function TransferDashboard({ transfer, addToast }) {
         </div>
       </div>
 
-      {/* Action Buttons Row (Download / Cancel) */}
+      {/* Action Buttons Row (Download / Send Another / Done / Cancel) */}
       <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
         {receivedFileUrl && (
           <button
@@ -330,31 +419,51 @@ export default function TransferDashboard({ transfer, addToast }) {
             Download File <Download size={15} />
           </button>
         )}
-        <button
-          onClick={handleCancel}
-          className="glass-btn"
-          style={{
-            flex: receivedFileUrl ? '0 0 80px' : 1,
-            height: '46px',
-            padding: '0 12px',
-            borderRadius: '14px',
-            fontSize: '0.88rem',
-            fontWeight: 600,
-            whiteSpace: 'nowrap',
-            opacity: 0.85,
-            cursor: 'pointer'
-          }}
-        >
-          {isCompleted ? 'Close' : 'Cancel'}
-        </button>
+
+        {isCompleted && isSending ? (
+          <button
+            onClick={handleCancel}
+            className="glass-btn glass-btn-dark"
+            style={{
+              flex: 1,
+              height: '46px',
+              padding: '0 16px',
+              borderRadius: '14px',
+              fontSize: '0.88rem',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              cursor: 'pointer'
+            }}
+          >
+            Send Another File ✨
+          </button>
+        ) : (
+          <button
+            onClick={handleCancel}
+            className="glass-btn"
+            style={{
+              flex: receivedFileUrl ? '0 0 80px' : 1,
+              height: '46px',
+              padding: '0 12px',
+              borderRadius: '14px',
+              fontSize: '0.88rem',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              opacity: 0.85,
+              cursor: 'pointer'
+            }}
+          >
+            {isCompleted ? 'Done' : 'Cancel'}
+          </button>
+        )}
       </div>
     </div>
   );  return (
     <div style={{ position: 'relative', zIndex: 30, maxWidth: '750px', width: '100%', margin: '0 auto' }}>
       {/* Top 2-Column Grid: Send Files (Left) & Receive Files (Right) */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'clamp(12px, 1.8vw, 20px)', marginBottom: 'clamp(12px, 1.8vh, 20px)' }}>
+      <div className="cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'clamp(12px, 1.8vw, 20px)', marginBottom: 'clamp(12px, 1.8vh, 20px)' }}>
         {/* Left Card — Send Files */}
-        <div className="glass-card" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="glass-card card-send" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
           {/* Card Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -427,13 +536,31 @@ export default function TransferDashboard({ transfer, addToast }) {
                 <div className="dropzone-badge" style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#ffffff', boxShadow: '0 4px 14px rgba(168, 85, 247, 0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px auto' }}>
                   <Upload size={24} color="#a855f7" />
                 </div>
-                <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
+                <h4 className="dropzone-title" style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
                   Ready to share?
                 </h4>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                <p className="dropzone-subtitle" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                   Drag files or tap to browse
                 </p>
+                <span className="dropzone-mobile-text" style={{ display: 'none', fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-title)' }}>
+                  Tap to select file to send
+                </span>
               </label>
+            </div>
+          ) : isCompleted ? (
+            /* Completed Sender Panel */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--glass-card-bg)', padding: '24px 16px', borderRadius: '16px', border: '1px solid var(--glass-card-border)', textAlign: 'center', gap: '10px' }}>
+              <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.12)', border: '1.5px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
+                <Check size={26} />
+              </div>
+              <div>
+                <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
+                  File Delivered Successfully! 🎉
+                </h4>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  {selectedFile?.name || 'File'} ({formatBytes(selectedFile?.size)})
+                </p>
+              </div>
             </div>
           ) : (
             /* Selected File: 6-Digit Code (Above) + QR Code (Below) */
@@ -486,7 +613,7 @@ export default function TransferDashboard({ transfer, addToast }) {
         </div>
 
         {/* Right Card — Receive Files */}
-        <div className="glass-card" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="glass-card card-receive" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
           {/* Card Header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
             <div className="icon-pill icon-pill-emerald">
@@ -508,8 +635,8 @@ export default function TransferDashboard({ transfer, addToast }) {
           ) : (
             <>
               {/* 6-Digit Slot PIN Inputs */}
-              <div style={{ marginTop: '16px', marginBottom: '24px', width: '100%', display: 'flex', justifyContent: 'center' }}>
-                <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', width: '100%', margin: '0 auto' }} onPaste={handleDigitPaste}>
+              <div style={{ marginTop: '12px', marginBottom: '16px', width: '100%', display: 'flex', justifyContent: 'center' }}>
+                <div className="pin-slot-container" style={{ display: 'flex', justifyContent: 'center', gap: '8px', width: '100%', margin: '0 auto' }} onPaste={handleDigitPaste}>
                   {[0, 1, 2, 3, 4, 5].map((idx) => {
                     const char = (inputCode[idx] && inputCode[idx] !== ' ') ? inputCode[idx] : '';
                     return (
@@ -531,10 +658,10 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
 
               {/* Bottom Action Row */}
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginTop: 'auto' }}>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: 'auto' }}>
                 <button
                   onClick={handleJoinSession}
-                  className="glass-btn glass-btn-dark"
+                  className="glass-btn glass-btn-dark receive-action-btn"
                   style={{
                     flex: 1,
                     height: '50px',
@@ -551,23 +678,31 @@ export default function TransferDashboard({ transfer, addToast }) {
                   Receive <Download size={18} />
                 </button>
 
-                {isMobile && (
-                  <button
-                    className="glass-btn qr-scan-btn"
-                    style={{
-                      width: '52px',
-                      height: '52px',
-                      padding: 0,
-                      borderRadius: '14px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justify: 'center'
-                    }}
-                    title="Scan QR Code"
-                  >
-                    <QrCode size={20} color="var(--text-muted)" />
-                  </button>
-                )}
+                <button
+                  onClick={handleQrScanClick}
+                  className="glass-btn qr-scan-btn"
+                  style={{
+                    width: '52px',
+                    height: '52px',
+                    padding: 0,
+                    borderRadius: '14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}
+                  title="Scan QR Code"
+                >
+                  <QrCode size={20} color="var(--text-muted)" />
+                </button>
+                <input
+                  type="file"
+                  ref={qrInputRef}
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={handleQrFileSelect}
+                />
               </div>
             </>
           )}

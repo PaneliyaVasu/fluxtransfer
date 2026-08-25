@@ -32,7 +32,7 @@ export default function App() {
   }, [transfer.errorMessage]);
 
   return (
-    <div style={{ position: 'relative', zIndex: 1, padding: '16px 24px 0px 24px', maxWidth: '1240px', margin: '0 auto', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className="app-container" style={{ position: 'relative', zIndex: 1, padding: '16px 24px 0px 24px', maxWidth: '1240px', margin: '0 auto', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Background Shader Texture */}
       <div className="bg-liquid-overlay"></div>
 
