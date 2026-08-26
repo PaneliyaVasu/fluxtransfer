@@ -47,10 +47,22 @@ function getAllowedOrigins() {
   return DEFAULT_ALLOWED_ORIGINS;
 }
 
-function isOriginAllowed(originHeader) {
+function isOriginAllowed(originHeader, req) {
   if (!originHeader) return true; // Non-browser clients or local tests without Origin header
-  const allowed = getAllowedOrigins();
   const cleanOrigin = originHeader.trim().replace(/\/$/, '');
+
+  // Allow same-origin connections automatically (e.g. unified deployment on Render, Railway, VPS)
+  if (req && req.headers) {
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    if (host) {
+      const cleanHost = host.trim();
+      if (cleanOrigin === `https://${cleanHost}` || cleanOrigin === `http://${cleanHost}`) {
+        return true;
+      }
+    }
+  }
+
+  const allowed = getAllowedOrigins();
   return allowed.some(allowedOrigin => allowedOrigin.replace(/\/$/, '') === cleanOrigin);
 }
 
@@ -255,7 +267,7 @@ server.on('upgrade', (request, socket, head) => {
 
   const origin = request.headers.origin;
 
-  if (!isOriginAllowed(origin)) {
+  if (!isOriginAllowed(origin, request)) {
     console.warn(`[Signaling Server] Rejected WebSocket upgrade request from unauthorized Origin: ${origin}`);
     socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized Origin');
     socket.destroy();
