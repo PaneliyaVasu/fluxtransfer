@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import FluxWebRTCEngine from '../engine/webrtc-engine.js';
+import { generateSessionCode, isValidSessionCode } from '../config/app-config.js';
 
 export function useFluxTransfer() {
   const [engineState, setEngineState] = useState('idle'); // idle, connecting, connected, transferring, completed, failed, cancelled
@@ -97,8 +98,8 @@ export function useFluxTransfer() {
     setRole('sender');
     setErrorMessage('');
 
-    // Generate 6-digit numeric pairing PIN
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate 8-character cryptographically secure session code
+    const code = generateSessionCode(8);
     setPairingCode(code);
 
     try {
@@ -110,7 +111,10 @@ export function useFluxTransfer() {
 
   const joinReceiveSession = useCallback(async (code) => {
     const cleanCode = String(code || '').trim();
-    if (!cleanCode || !engineRef.current) return;
+    if (!isValidSessionCode(cleanCode) || !engineRef.current) {
+      setErrorMessage('Invalid session code format');
+      return;
+    }
     setRole('receiver');
     setErrorMessage('');
     try {
@@ -122,21 +126,20 @@ export function useFluxTransfer() {
 
   const cancelTransfer = useCallback(() => {
     selectedFileRef.current = null;
-    if (engineRef.current) {
-      try {
-        engineRef.current.cancelTransfer();
-      } catch (e) {}
-    }
+    setSelectedFile(null);
     setRole(null);
     setPairingCode('');
-    setSelectedFile(null);
     setTransferProgress(0);
+    setTransferSpeed('0 MB/s');
     setTransferredBytes(0);
     setTotalBytes(0);
     setReceivedFileBlob(null);
     setReceivedFileUrl(null);
     setReceivedFileName('');
     setErrorMessage('');
+    if (engineRef.current) {
+      engineRef.current.disconnect();
+    }
   }, []);
 
   return {
@@ -158,3 +161,5 @@ export function useFluxTransfer() {
     cancelTransfer
   };
 }
+
+export default useFluxTransfer;

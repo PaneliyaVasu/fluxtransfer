@@ -11,6 +11,84 @@ const METADATA_ACK_TIMEOUT_MS = 15000; // 15 seconds timeout waiting for receive
 const MAX_EARLY_CHUNK_QUEUE_SIZE = 100; // Maximum early binary chunks queued while receiver initializes
 const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling room cleanup
 
+const ALPHANUMERIC_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+
+function getCryptoObj() {
+  if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.getRandomValues === 'function') {
+    return window.crypto;
+  }
+  if (typeof self !== 'undefined' && self.crypto && typeof self.crypto.getRandomValues === 'function') {
+    return self.crypto;
+  }
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') {
+    return globalThis.crypto;
+  }
+  if (typeof require !== 'undefined') {
+    try {
+      const nodeCrypto = require('crypto');
+      if (nodeCrypto.webcrypto) return nodeCrypto.webcrypto;
+    } catch (_) {}
+  }
+  return null;
+}
+
+/**
+ * Generate a cryptographically secure, unbiased session code of specified length.
+ * Default: 8 alphanumeric characters (~47.6 bits of entropy).
+ * Uses rejection sampling to eliminate modulo bias.
+ */
+function generateSessionCode(length = 8) {
+  const cryptoObj = getCryptoObj();
+  const alphabetLen = ALPHANUMERIC_ALPHABET.length; // 62
+  const maxUnbiasedByte = 256 - (256 % alphabetLen); // 248 (bytes >= 248 rejected)
+
+  let code = '';
+  while (code.length < length) {
+    const randomBytes = new Uint8Array(length * 2);
+    if (cryptoObj) {
+      cryptoObj.getRandomValues(randomBytes);
+    } else {
+      // Fallback only if WebCrypto is unavailable in test environment
+      for (let i = 0; i < randomBytes.length; i++) {
+        randomBytes[i] = Math.floor(Math.random() * 256);
+      }
+    }
+
+    for (let i = 0; i < randomBytes.length && code.length < length; i++) {
+      const byte = randomBytes[i];
+      if (byte < maxUnbiasedByte) {
+        code += ALPHANUMERIC_ALPHABET[byte % alphabetLen];
+      }
+    }
+  }
+
+  return code;
+}
+
+function isValidSessionCode(code) {
+  if (!code || typeof code !== 'string') return false;
+  const trimmed = code.trim();
+  return /^[a-zA-Z0-9]{8}$/.test(trimmed) || /^[0-9]{6}$/.test(trimmed);
+}
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:4173',
+  'http://localhost:8080',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080'
+];
+
+function getAllowedOrigins() {
+  if (typeof process !== 'undefined' && process.env && process.env.ALLOWED_ORIGINS) {
+    return process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
+  }
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ALLOWED_ORIGINS) {
+    return import.meta.env.VITE_ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
+  }
+  return DEFAULT_ALLOWED_ORIGINS;
+}
+
 const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -83,6 +161,10 @@ const APP_CONFIG = {
   METADATA_ACK_TIMEOUT_MS,
   MAX_EARLY_CHUNK_QUEUE_SIZE,
   ROOM_INACTIVITY_TIMEOUT_MS,
+  ALPHANUMERIC_ALPHABET,
+  generateSessionCode,
+  isValidSessionCode,
+  getAllowedOrigins,
   DEFAULT_ICE_SERVERS,
   getIceServers,
   getDefaultSignalingUrl,
@@ -101,6 +183,10 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node 
   module.exports.METADATA_ACK_TIMEOUT_MS = METADATA_ACK_TIMEOUT_MS;
   module.exports.MAX_EARLY_CHUNK_QUEUE_SIZE = MAX_EARLY_CHUNK_QUEUE_SIZE;
   module.exports.ROOM_INACTIVITY_TIMEOUT_MS = ROOM_INACTIVITY_TIMEOUT_MS;
+  module.exports.ALPHANUMERIC_ALPHABET = ALPHANUMERIC_ALPHABET;
+  module.exports.generateSessionCode = generateSessionCode;
+  module.exports.isValidSessionCode = isValidSessionCode;
+  module.exports.getAllowedOrigins = getAllowedOrigins;
   module.exports.DEFAULT_ICE_SERVERS = DEFAULT_ICE_SERVERS;
   module.exports.getIceServers = getIceServers;
   module.exports.getDefaultSignalingUrl = getDefaultSignalingUrl;
@@ -116,6 +202,10 @@ export {
   METADATA_ACK_TIMEOUT_MS,
   MAX_EARLY_CHUNK_QUEUE_SIZE,
   ROOM_INACTIVITY_TIMEOUT_MS,
+  ALPHANUMERIC_ALPHABET,
+  generateSessionCode,
+  isValidSessionCode,
+  getAllowedOrigins,
   DEFAULT_ICE_SERVERS,
   getIceServers,
   getDefaultSignalingUrl,

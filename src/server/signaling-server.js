@@ -18,6 +18,28 @@ const distDir = path.join(__dirname, '..', '..', 'dist');
 const STATIC_DIR = distDir;
 const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling cleanup
 
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:4173',
+  'http://localhost:8080',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080'
+];
+
+function getAllowedOrigins() {
+  if (process.env.ALLOWED_ORIGINS) {
+    return process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
+  }
+  return DEFAULT_ALLOWED_ORIGINS;
+}
+
+function isOriginAllowed(originHeader) {
+  if (!originHeader) return true; // Non-browser clients or local tests without Origin header
+  const allowed = getAllowedOrigins();
+  const cleanOrigin = originHeader.trim().replace(/\/$/, '');
+  return allowed.some(allowedOrigin => allowedOrigin.replace(/\/$/, '') === cleanOrigin);
+}
+
 // ─── MIME Types ───────────────────────────────────────────────────────────────
 const MIME = {
   '.html': 'text/html',
@@ -149,6 +171,15 @@ const wss = new WebSocketServer({
 });
 
 server.on('upgrade', (request, socket, head) => {
+  const origin = request.headers.origin;
+
+  if (!isOriginAllowed(origin)) {
+    console.warn(`[Signaling Server] Rejected WebSocket upgrade request from unauthorized Origin: ${origin}`);
+    socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized Origin');
+    socket.destroy();
+    return;
+  }
+
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit('connection', ws, request);
   });

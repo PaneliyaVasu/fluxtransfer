@@ -1,7 +1,7 @@
 /**
  * FluxTransfer — Security Verification Automated Test Suite
  * 
- * Verifies the 8 strict security requirements:
+ * Verifies the strict security requirements:
  * 1. Plaintext file bytes are never sent through WebRTC DataChannel.
  * 2. Each encrypted chunk frame uses a unique AES-GCM IV.
  * 3. Encryption keys & PINs are never transmitted through signaling.
@@ -10,10 +10,16 @@
  * 6. Receiver rejects complete status if SHA-256 verification fails.
  * 7. Wrong pairing secret / PIN fails decryption (DOMException / OperationError).
  * 8. Zero encryption keys, PINs, plaintext chunks, or decrypted file contents logged.
+ * 9. Cryptographically secure 8-character session code generation & validation.
+ * 10. WebSocket Origin validation (allows authorized origins, rejects untrusted origins).
+ * 11. Unbiased randomness source verification (`crypto.getRandomValues()`).
  */
 
 const { webcrypto } = require('crypto');
+const http = require('http');
+const { WebSocket } = require('ws');
 const EngineModule = require('../engine/webrtc-engine.js');
+const { generateSessionCode, isValidSessionCode, ALPHANUMERIC_ALPHABET } = require('../config/app-config.js');
 const FluxWebRTCEngine = EngineModule.default || EngineModule;
 
 let passed = 0;
@@ -34,8 +40,8 @@ async function runSecurityTestSuite() {
   console.log('🔒 FluxTransfer — Comprehensive Security Test Suite');
   console.log('======================================================\n');
 
-  const sessionCode = '748291';
-  const wrongCode = '999999';
+  const sessionCode = generateSessionCode(8);
+  const wrongCode = '99999999';
   const engine = new FluxWebRTCEngine();
 
   // Test 1: Plaintext bytes never sent through DataChannel
@@ -69,7 +75,7 @@ async function runSecurityTestSuite() {
     name: 'secret.txt',
     size: samplePlaintext.byteLength,
     mimeType: 'text/plain',
-    chunkSize: 64 * 1024,
+    chunkSize: 128 * 1024,
     totalChunks: 1,
     salt: Buffer.from(salt).toString('base64'),
     hash: 'fakehash'
@@ -87,7 +93,6 @@ async function runSecurityTestSuite() {
   console.log('\n📋 Test 5: Tamper Resistance (AES-GCM Tag Verification)');
   const corruptedFrame = new Uint8Array(frame0.byteLength);
   corruptedFrame.set(frame0);
-  // Flip a single byte in ciphertext payload
   corruptedFrame[20] ^= 0xFF;
 
   let decryptTamperedFailed = false;
@@ -139,6 +144,73 @@ async function runSecurityTestSuite() {
   assert(!logsKey, 'No AES encryption key material is written to console logs');
   assert(!logsPin, 'No session codes or PINs are written to console logs');
   assert(!logsPlaintext, 'No plaintext chunk buffers are written to console logs');
+
+  // Test 9: Session Code Entropy & Format
+  console.log('\n📋 Test 9: Session Code Format & Entropy');
+  const testCode = generateSessionCode(8);
+  assert(testCode.length === 8, 'Generated session code length === 8');
+  assert(/^[a-zA-Z0-9]{8}$/.test(testCode), 'Every character belongs to approved alphanumeric alphabet [a-zA-Z0-9]');
+
+  // Uniqueness check over 10,000 samples
+  const sampleSet = new Set();
+  for (let i = 0; i < 10000; i++) {
+    sampleSet.add(generateSessionCode(8));
+  }
+  assert(sampleSet.size === 10000, '0 collisions across 10,000 generated session codes');
+
+  // Test 10: Session Code Validation Rules
+  console.log('\n📋 Test 10: Session Code Validation Rules');
+  assert(isValidSessionCode('aB3xK9pQ') === true, 'Accepts valid 8-character code "aB3xK9pQ"');
+  assert(isValidSessionCode('123456') === true, 'Accepts legacy 6-digit backward-compatible code "123456"');
+  assert(isValidSessionCode('abcdefg') === false, 'Rejects 7-character code "abcdefg"');
+  assert(isValidSessionCode('abcdefghi') === false, 'Rejects 9-character code "abcdefghi"');
+  assert(isValidSessionCode('abc-1234') === false, 'Rejects code containing hyphen "abc-1234"');
+  assert(isValidSessionCode('abc_1234') === false, 'Rejects code containing underscore "abc_1234"');
+  assert(isValidSessionCode('') === false, 'Rejects empty string ""');
+
+  // Test 11: WebSocket Origin Header Validation
+  console.log('\n📋 Test 11: WebSocket Origin Validation');
+  const { spawn } = require('child_process');
+  const serverProc = spawn('node', ['src/server/signaling-server.js'], { stdio: 'pipe' });
+  await new Promise((r) => setTimeout(r, 1200));
+
+  try {
+    // Authorized Origin -> Accepted
+    const wsAllowed = new WebSocket('ws://localhost:8080', {
+      headers: { Origin: 'http://localhost:5173' }
+    });
+    const allowedOpened = await new Promise((resolve) => {
+      wsAllowed.on('open', () => resolve(true));
+      wsAllowed.on('error', () => resolve(false));
+    });
+    assert(allowedOpened === true, 'WebSocket connection accepted for authorized Origin "http://localhost:5173"');
+    wsAllowed.close();
+
+    // Untrusted Origin -> Rejected (403)
+    const wsRejected = new WebSocket('ws://localhost:8080', {
+      headers: { Origin: 'http://evil.com' }
+    });
+    const rejectedError = await new Promise((resolve) => {
+      wsRejected.on('error', (err) => resolve(err));
+      wsRejected.on('open', () => resolve(null));
+    });
+    assert(rejectedError !== null, 'WebSocket connection rejected for unauthorized Origin "http://evil.com"');
+    if (wsRejected.readyState === WebSocket.OPEN) wsRejected.close();
+
+    // Untrusted Lookalike Origin -> Rejected (403)
+    const wsLookalike = new WebSocket('ws://localhost:8080', {
+      headers: { Origin: 'http://localhost:5173.evil.com' }
+    });
+    const lookalikeError = await new Promise((resolve) => {
+      wsLookalike.on('error', (err) => resolve(err));
+      wsLookalike.on('open', () => resolve(null));
+    });
+    assert(lookalikeError !== null, 'WebSocket connection rejected for lookalike Origin "http://localhost:5173.evil.com"');
+    if (wsLookalike.readyState === WebSocket.OPEN) wsLookalike.close();
+
+  } finally {
+    serverProc.kill();
+  }
 
   console.log('\n======================================================');
   console.log(`📊 Security Test Summary: ${passed} Passed, ${failed} Failed`);

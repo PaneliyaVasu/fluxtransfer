@@ -34,15 +34,14 @@ export default function TransferDashboard({ transfer, addToast }) {
 
       if (result && result.data) {
         const raw = result.data;
-        // Extract code from URL (?code=XXXXXX) or use raw if it's a 6-digit number
-        const urlMatch = raw.match(/[?&]code=(\d{6})/);
-        const code = urlMatch ? urlMatch[1] : (raw.match(/^\d{6}$/) ? raw : null);
+        // Extract 8-char or legacy 6-digit code from URL (?code=XXXXXX) or raw text
+        const urlMatch = raw.match(/[?&]code=([a-zA-Z0-9]{8}|\d{6})/);
+        const code = urlMatch ? urlMatch[1] : (raw.match(/^([a-zA-Z0-9]{8}|\d{6})$/) ? raw : null);
 
         if (code) {
           setInputCode(code);
-          // Auto-fill digit refs
-          code.split('').forEach((digit, idx) => {
-            if (digitRefs[idx]?.current) digitRefs[idx].current.value = digit;
+          code.split('').forEach((char, idx) => {
+            if (digitRefs[idx]?.current) digitRefs[idx].current.value = char;
           });
           if (addToast) addToast('success', 'QR Code Scanned', `Connecting to code ${code}...`);
           if (transfer.joinReceiveSession) {
@@ -66,6 +65,8 @@ export default function TransferDashboard({ transfer, addToast }) {
     React.useRef(null),
     React.useRef(null),
     React.useRef(null),
+    React.useRef(null),
+    React.useRef(null),
     React.useRef(null)
   ];
 
@@ -82,12 +83,12 @@ export default function TransferDashboard({ transfer, addToast }) {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Auto-connect when scanned via QR code link (?code=123456)
+  // Auto-connect when scanned via QR code link (?code=aB3xK9pQ)
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const urlCode = params.get('code');
-      if (urlCode && /^\d{6}$/.test(urlCode.trim())) {
+      if (urlCode && /^[a-zA-Z0-9]{8}$|^\d{6}$/.test(urlCode.trim())) {
         const cleanCode = urlCode.trim();
         setInputCode(cleanCode);
         
@@ -128,7 +129,6 @@ export default function TransferDashboard({ transfer, addToast }) {
     if (e) e.preventDefault();
     if (!receivedFileBlob && !receivedFileUrl) return;
 
-    // 1. Native File System Access API (Bypasses Chrome Network Download Manager completely for multi-GB files!)
     if ('showSaveFilePicker' in window) {
       try {
         const handle = await window.showSaveFilePicker({
@@ -146,11 +146,10 @@ export default function TransferDashboard({ transfer, addToast }) {
         if (addToast) addToast('success', 'File Saved', `Saved directly to disk: ${receivedFileName || 'file'}`);
         return;
       } catch (err) {
-        if (err.name === 'AbortError') return; // User cancelled save dialog
+        if (err.name === 'AbortError') return;
       }
     }
 
-    // 2. Direct Programmatic Anchor Fallback
     const a = document.createElement('a');
     a.href = receivedFileUrl;
     a.download = receivedFileName || 'downloaded-file';
@@ -179,8 +178,8 @@ export default function TransferDashboard({ transfer, addToast }) {
 
   const handleJoinSession = () => {
     const cleanCode = inputCode.trim();
-    if (!cleanCode || cleanCode.length !== 6) {
-      if (addToast) addToast('error', 'Invalid Code', 'Please enter a 6-digit transfer code.');
+    if (!cleanCode || (cleanCode.length !== 8 && cleanCode.length !== 6)) {
+      if (addToast) addToast('error', 'Invalid Code', 'Please enter an 8-character transfer code.');
       return;
     }
     joinReceiveSession(cleanCode);
@@ -188,13 +187,14 @@ export default function TransferDashboard({ transfer, addToast }) {
   };
 
   const handleDigitChange = (index, value) => {
-    const char = value.replace(/\D/g, '').slice(-1);
-    const digits = (inputCode.padEnd(6, ' ')).split('');
+    const char = value.replace(/[^a-zA-Z0-9]/g, '').slice(-1);
+    const maxLen = 8;
+    const digits = (inputCode.padEnd(maxLen, ' ')).split('');
     digits[index] = char || ' ';
     const newCode = digits.join('').replace(/\s+$/, '');
     setInputCode(newCode);
 
-    if (char && index < 5) {
+    if (char && index < maxLen - 1) {
       digitRefs[index + 1].current?.focus();
     }
   };
@@ -207,10 +207,10 @@ export default function TransferDashboard({ transfer, addToast }) {
 
   const handleDigitPaste = (e) => {
     e.preventDefault();
-    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    const pasted = e.clipboardData.getData('text').replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
     if (pasted) {
       setInputCode(pasted);
-      const focusIndex = Math.min(pasted.length, 5);
+      const focusIndex = Math.min(pasted.length, 7);
       digitRefs[focusIndex]?.current?.focus();
     }
   };
@@ -227,7 +227,7 @@ export default function TransferDashboard({ transfer, addToast }) {
     if (!pairingCode) return;
     navigator.clipboard.writeText(pairingCode);
     setIsCopied(true);
-    if (addToast) addToast('success', 'Code Copied', '6-digit pairing code copied to clipboard!');
+    if (addToast) addToast('success', 'Code Copied', 'Pairing code copied to clipboard!');
     setTimeout(() => setIsCopied(false), 2000);
   };
 
@@ -247,7 +247,7 @@ export default function TransferDashboard({ transfer, addToast }) {
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        justify: 'space-between',
+        justifyContent: 'space-between',
         background: 'var(--glass-card-bg)',
         padding: '20px 18px',
         borderRadius: '18px',
@@ -256,7 +256,6 @@ export default function TransferDashboard({ transfer, addToast }) {
       }}
     >
       <div>
-        {/* Top Header Row: Status Title & Badge */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
           <div>
             <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '2px' }}>
@@ -337,7 +336,6 @@ export default function TransferDashboard({ transfer, addToast }) {
           </span>
         </div>
 
-        {/* Progress Bar with Glowing Gradient Fill */}
         <div style={{ width: '100%', background: 'rgba(203, 213, 225, 0.35)', borderRadius: '999px', height: '10px', overflow: 'hidden', marginBottom: '18px' }}>
           <div
             style={{
@@ -351,7 +349,6 @@ export default function TransferDashboard({ transfer, addToast }) {
           ></div>
         </div>
 
-        {/* Rich File Details Box */}
         <div
           style={{
             display: 'flex',
@@ -364,7 +361,6 @@ export default function TransferDashboard({ transfer, addToast }) {
             marginBottom: '16px'
           }}
         >
-          {/* File Icon Badge */}
           <div
             style={{
               width: '42px',
@@ -381,7 +377,6 @@ export default function TransferDashboard({ transfer, addToast }) {
             <FileText size={20} />
           </div>
 
-          {/* Name, Byte Counter, and Live Speed */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '4px' }}>
               {selectedFile?.name || receivedFileName || 'Incoming File'}
@@ -398,7 +393,6 @@ export default function TransferDashboard({ transfer, addToast }) {
         </div>
       </div>
 
-      {/* Action Buttons Row (Download / Send Another / Done / Cancel) */}
       <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
         {receivedFileUrl && (
           <button
@@ -461,13 +455,13 @@ export default function TransferDashboard({ transfer, addToast }) {
         )}
       </div>
     </div>
-  );  return (
+  );
+
+  return (
     <div style={{ position: 'relative', zIndex: 30, maxWidth: '750px', width: '100%', margin: '0 auto' }}>
-      {/* Top 2-Column Grid: Send Files (Left) & Receive Files (Right) */}
       <div className="cards-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 'clamp(12px, 1.8vw, 20px)', marginBottom: 'clamp(12px, 1.8vh, 20px)' }}>
         {/* Left Card — Send Files */}
         <div className="glass-card card-send" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
-          {/* Card Header */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
               <div className="icon-pill icon-pill-purple">
@@ -483,7 +477,6 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
             </div>
 
-            {/* Top Right X Button when File is Uploaded */}
             {selectedFile && (
               <button
                 onClick={handleCancel}
@@ -509,11 +502,9 @@ export default function TransferDashboard({ transfer, addToast }) {
             )}
           </div>
 
-          {/* If RECEIVING file: Place Transfer Progress inside Sender block */}
           {isReceiving ? (
             renderTransferProgressCard()
           ) : !selectedFile ? (
-            /* Send File Dropzone */
             <div
               className="dropzone-box"
               onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
@@ -545,13 +536,9 @@ export default function TransferDashboard({ transfer, addToast }) {
                 <p className="dropzone-subtitle" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
                   Drag files or tap to browse
                 </p>
-                <span className="dropzone-mobile-text" style={{ display: 'none', fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-title)' }}>
-                  Tap to select file to send
-                </span>
               </label>
             </div>
           ) : isCompleted ? (
-            /* Completed Sender Panel */
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--glass-card-bg)', padding: '24px 16px', borderRadius: '16px', border: '1px solid var(--glass-card-border)', textAlign: 'center', gap: '10px' }}>
               <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.12)', border: '1.5px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
                 <Check size={26} />
@@ -566,20 +553,21 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
             </div>
           ) : (
-            /* Selected File: 6-Digit Code (Above) + QR Code (Below) */
+            /* Selected File: 8-Character Pairing Code + QR Code */
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'var(--glass-card-bg)', padding: '20px 14px', borderRadius: '16px', border: '1px solid var(--glass-card-border)', textAlign: 'center' }}>
               <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>
-                6-DIGIT PAIRING CODE
+                8-CHARACTER PAIRING CODE
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: '14px' }}>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '0 auto' }}>
-                  {(pairingCode || '------').split('').map((digit, idx) => (
+                <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', margin: '0 auto', flexWrap: 'nowrap' }}>
+                  {(pairingCode || '--------').split('').map((char, idx) => (
                     <div
                       key={idx}
                       className="pin-slot-input"
+                      style={{ width: '32px', height: '42px', fontSize: '1rem', fontWeight: 700 }}
                     >
-                      {digit}
+                      {char}
                     </div>
                   ))}
                 </div>
@@ -603,7 +591,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                   value={
                     typeof window !== 'undefined' && pairingCode
                       ? `${window.location.origin}/?code=${pairingCode}`
-                      : pairingCode || '000000'
+                      : pairingCode || '--------'
                   }
                   size={132}
                   bgColor="#ffffff"
@@ -617,7 +605,6 @@ export default function TransferDashboard({ transfer, addToast }) {
 
         {/* Right Card — Receive Files */}
         <div className="glass-card card-receive" style={{ padding: 'clamp(18px, 2.4vh, 24px)', display: 'flex', flexDirection: 'column' }}>
-          {/* Card Header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
             <div className="icon-pill icon-pill-emerald">
               <Download size={22} />
@@ -632,15 +619,14 @@ export default function TransferDashboard({ transfer, addToast }) {
             </div>
           </div>
 
-          {/* If SENDING file: Place Transfer Progress inside Receiver block */}
           {isSending ? (
             renderTransferProgressCard()
           ) : (
             <>
-              {/* 6-Digit Slot PIN Inputs */}
+              {/* 8-Character Slot PIN Inputs */}
               <div style={{ marginTop: '12px', marginBottom: '16px', width: '100%', display: 'flex', justifyContent: 'center' }}>
-                <div className="pin-slot-container" style={{ display: 'flex', justifyContent: 'center', gap: '8px', width: '100%', margin: '0 auto' }} onPaste={handleDigitPaste}>
-                  {[0, 1, 2, 3, 4, 5].map((idx) => {
+                <div className="pin-slot-container" style={{ display: 'flex', justifyContent: 'center', gap: '6px', width: '100%', margin: '0 auto' }} onPaste={handleDigitPaste}>
+                  {[0, 1, 2, 3, 4, 5, 6, 7].map((idx) => {
                     const char = (inputCode[idx] && inputCode[idx] !== ' ') ? inputCode[idx] : '';
                     return (
                       <input
@@ -648,19 +634,17 @@ export default function TransferDashboard({ transfer, addToast }) {
                         ref={digitRefs[idx]}
                         type="text"
                         maxLength={1}
-                        inputMode="numeric"
-                        pattern="[0-9]*"
                         value={char}
                         onChange={(e) => handleDigitChange(idx, e.target.value)}
                         onKeyDown={(e) => handleDigitKeyDown(idx, e)}
                         className="pin-slot-input"
+                        style={{ width: '32px', height: '42px', fontSize: '1rem' }}
                       />
                     );
                   })}
                 </div>
               </div>
 
-              {/* Bottom Action Row */}
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: 'auto' }}>
                 <button
                   onClick={handleJoinSession}
