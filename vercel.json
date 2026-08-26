@@ -1,5 +1,5 @@
 {
   "version": 2,
-  "outputDirectory": "src/client",
+  "outputDirectory": "dist",
   "cleanUrls": true
 }

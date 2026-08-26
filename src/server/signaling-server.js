@@ -2,12 +2,8 @@
  * FluxTransfer — Unified Server (Static Files + WebRTC Signaling)
  *
  * Serves compiled production client files AND WebSocket signaling on ONE port.
- * This is the correct setup for cross-network deployment:
- *   - Static files: GET /  → serves dist/
- *   - Signaling:    WS /   → WebSocket upgrade
- *
- * Deploy on any cloud (Render, Railway, Fly.io, Heroku) and both
- * the website AND the WebSocket signaling are publicly reachable.
+ * Static files: GET /  → serves dist/
+ * Signaling:    WS /   → WebSocket upgrade
  *
  * ZERO file data passes through this server.
  */
@@ -20,6 +16,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const PORT = process.env.PORT || 8080;
 const distDir = path.join(__dirname, '..', '..', 'dist');
 const STATIC_DIR = distDir;
+const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling cleanup
 
 // ─── MIME Types ───────────────────────────────────────────────────────────────
 const MIME = {
@@ -39,12 +36,10 @@ const MIME = {
 };
 
 function serveStatic(req, res) {
-  // CORS headers for signaling health check
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   let reqPath = req.url.split('?')[0].split('#')[0];
 
-  // SPA-style routing: trailing-slash pages load their index.html
   if (reqPath.endsWith('/') && reqPath !== '/') {
     reqPath += 'index.html';
   }
@@ -54,14 +49,12 @@ function serveStatic(req, res) {
 
   const filePath = path.join(STATIC_DIR, reqPath);
 
-  // Prevent path traversal
   if (!filePath.startsWith(STATIC_DIR)) {
     res.writeHead(403); res.end('Forbidden'); return;
   }
 
   fs.stat(filePath, (err, stat) => {
     if (err) {
-      // For unknown paths, serve root index.html (client-side routing)
       const fallback = path.join(STATIC_DIR, 'index.html');
       fs.readFile(fallback, (e, data) => {
         if (e) { res.writeHead(404); res.end('Not found'); return; }
@@ -106,7 +99,6 @@ function serveStatic(req, res) {
 
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
-  // Health check endpoint for uptime monitors
   if (req.url === '/health' || req.url === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({
@@ -122,8 +114,8 @@ const server = http.createServer((req, res) => {
 });
 
 // ─── Room Store & Security Configuration ─────────────────────────────────────
-const rooms = new Map(); // Map<roomCode, Set<WebSocket>>
-const roomTimestamps = new Map(); // Map<roomCode, timestamp>
+// Map<roomCode, { peers: Set<WebSocket>, roles: Map<peerToken, role>, lastActivityTime: number }>
+const rooms = new Map();
 
 const MAX_MESSAGE_SIZE_BYTES = 16 * 1024; // 16 KB max message payload
 const IP_JOIN_LIMIT_PER_MIN = 30; // Max 30 room joins per IP per minute
@@ -143,7 +135,14 @@ function checkIpRateLimit(ip) {
   return entry.count <= IP_JOIN_LIMIT_PER_MIN;
 }
 
-// ─── WebSocket Server (explicit upgrade handler for reverse proxies like Render) ───
+function touchRoomActivity(roomCode) {
+  const roomData = rooms.get(roomCode);
+  if (roomData) {
+    roomData.lastActivityTime = Date.now();
+  }
+}
+
+// ─── WebSocket Server ────────────────────────────────────────────────────────
 const wss = new WebSocketServer({
   noServer: true,
   maxPayload: MAX_MESSAGE_SIZE_BYTES
@@ -162,9 +161,9 @@ function send(ws, data) {
 }
 
 function relayToPeer(roomCode, senderWs, data) {
-  const room = rooms.get(roomCode);
-  if (!room) return;
-  for (const client of room) {
+  const roomData = rooms.get(roomCode);
+  if (!roomData) return;
+  for (const client of roomData.peers) {
     if (client !== senderWs && client.readyState === WebSocket.OPEN) {
       send(client, data);
     }
@@ -175,15 +174,15 @@ function leaveRoom(ws) {
   if (!ws.roomCode) return;
 
   const roomCode = ws.roomCode;
-  const room = rooms.get(roomCode);
+  const roomData = rooms.get(roomCode);
 
-  if (room) {
-    room.delete(ws);
+  if (roomData) {
+    roomData.peers.delete(ws);
     relayToPeer(roomCode, ws, { type: 'peer-left' });
+    touchRoomActivity(roomCode);
 
-    if (room.size === 0) {
+    if (roomData.peers.size === 0) {
       rooms.delete(roomCode);
-      roomTimestamps.delete(roomCode);
     }
   }
 
@@ -193,6 +192,7 @@ function leaveRoom(ws) {
 wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.roomCode = null;
+  ws.peerToken = null;
   ws.msgCount = 0;
   ws.msgResetTime = Date.now() + 60000;
   const clientIp = (req.socket && req.socket.remoteAddress) || '127.0.0.1';
@@ -200,13 +200,11 @@ wss.on('connection', (ws, req) => {
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (rawMessage) => {
-    // 1. Message size check
     if (Buffer.byteLength(rawMessage) > MAX_MESSAGE_SIZE_BYTES) {
       send(ws, { type: 'error', message: 'Payload size limit exceeded' });
       return;
     }
 
-    // 2. Per-socket message rate limit check
     const now = Date.now();
     if (now > ws.msgResetTime) {
       ws.msgCount = 1;
@@ -219,7 +217,6 @@ wss.on('connection', (ws, req) => {
       }
     }
 
-    // 3. Schema validation & handling
     try {
       const message = JSON.parse(rawMessage.toString());
       if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
@@ -227,7 +224,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      const { type, room, offer, answer, candidate } = message;
+      const { type, room, peerToken: msgPeerToken, offer, answer, candidate } = message;
 
       switch (type) {
         case 'join-room': {
@@ -242,40 +239,58 @@ wss.on('connection', (ws, req) => {
           }
 
           const cleanRoom = room.trim();
+          const token = (typeof msgPeerToken === 'string' && msgPeerToken.trim())
+            ? msgPeerToken.trim()
+            : (ws.peerToken || `token_${Math.random()}`);
+          ws.peerToken = token;
 
           if (ws.roomCode && ws.roomCode !== cleanRoom) {
             leaveRoom(ws);
           }
 
           if (!rooms.has(cleanRoom)) {
-            rooms.set(cleanRoom, new Set());
-            roomTimestamps.set(cleanRoom, Date.now());
+            rooms.set(cleanRoom, {
+              peers: new Set(),
+              roles: new Map(),
+              lastActivityTime: Date.now()
+            });
           }
 
-          const targetRoom = rooms.get(cleanRoom);
+          const roomData = rooms.get(cleanRoom);
+          roomData.lastActivityTime = Date.now();
 
-          if (targetRoom.has(ws)) {
-            send(ws, { type: 'joined', room: cleanRoom, role: targetRoom.size === 1 ? 'initiator' : 'joiner' });
+          if (roomData.peers.has(ws)) {
+            const role = roomData.roles.get(token) || (roomData.peers.size === 1 ? 'initiator' : 'joiner');
+            send(ws, { type: 'joined', room: cleanRoom, role, peerPresent: roomData.peers.size === 2 });
             return;
           }
 
-          if (targetRoom.size >= 2) {
+          if (roomData.peers.size >= 2) {
             send(ws, { type: 'room-full', room: cleanRoom });
             return;
           }
 
-          targetRoom.add(ws);
+          // Stable Role Model
+          let assignedRole;
+          if (roomData.roles.has(token)) {
+            assignedRole = roomData.roles.get(token);
+          } else {
+            const hasInitiator = Array.from(roomData.roles.values()).includes('initiator');
+            assignedRole = !hasInitiator ? 'initiator' : 'joiner';
+            roomData.roles.set(token, assignedRole);
+          }
+
+          roomData.peers.add(ws);
           ws.roomCode = cleanRoom;
 
-          const isInitiator = targetRoom.size === 1;
           send(ws, {
             type: 'joined',
             room: cleanRoom,
-            role: isInitiator ? 'initiator' : 'joiner',
-            peerPresent: targetRoom.size === 2
+            role: assignedRole,
+            peerPresent: roomData.peers.size === 2
           });
 
-          if (targetRoom.size === 2) {
+          if (roomData.peers.size === 2) {
             relayToPeer(cleanRoom, ws, { type: 'peer-joined' });
           }
           break;
@@ -287,6 +302,7 @@ wss.on('connection', (ws, req) => {
             send(ws, { type: 'error', message: 'Invalid offer schema' });
             return;
           }
+          touchRoomActivity(ws.roomCode);
           relayToPeer(ws.roomCode, ws, { type: 'offer', offer });
           break;
         }
@@ -297,6 +313,7 @@ wss.on('connection', (ws, req) => {
             send(ws, { type: 'error', message: 'Invalid answer schema' });
             return;
           }
+          touchRoomActivity(ws.roomCode);
           relayToPeer(ws.roomCode, ws, { type: 'answer', answer });
           break;
         }
@@ -304,6 +321,7 @@ wss.on('connection', (ws, req) => {
         case 'ice-candidate': {
           if (!ws.roomCode) return;
           if (!candidate || typeof candidate !== 'object') return;
+          touchRoomActivity(ws.roomCode);
           relayToPeer(ws.roomCode, ws, { type: 'ice-candidate', candidate });
           break;
         }
@@ -326,22 +344,17 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => { leaveRoom(ws); });
 });
 
-// ─── Heartbeat & Stale Room Cleanup ─────────────────────────────────────────
+// ─── Heartbeat & Activity-Based Stale Room Cleanup ─────────────────────────────
 const pingInterval = setInterval(() => {
   const now = Date.now();
 
-  // Cleanup inactive rooms (> 15 mins)
-  roomTimestamps.forEach((createdTime, roomCode) => {
-    if (now - createdTime > 15 * 60 * 1000) {
-      const room = rooms.get(roomCode);
-      if (room) {
-        room.forEach(client => {
-          send(client, { type: 'error', message: 'Room session expired' });
-          leaveRoom(client);
-        });
-      }
+  rooms.forEach((roomData, roomCode) => {
+    if (now - roomData.lastActivityTime > ROOM_INACTIVITY_TIMEOUT_MS) {
+      roomData.peers.forEach(client => {
+        send(client, { type: 'error', message: 'Room signaling session expired due to inactivity' });
+        leaveRoom(client);
+      });
       rooms.delete(roomCode);
-      roomTimestamps.delete(roomCode);
     }
   });
 
@@ -363,4 +376,3 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`📡 WebSocket signaling ready on port ${PORT}`);
   console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
 });
-

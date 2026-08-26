@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import FluxWebRTCEngine from '../engine/webrtc-engine.js';
 
 export function useFluxTransfer() {
-  const [engineState, setEngineState] = useState('idle'); // idle, connecting, connected, transferring, completed, failed
+  const [engineState, setEngineState] = useState('idle'); // idle, connecting, connected, transferring, completed, failed, cancelled
   const [role, setRole] = useState(null); // 'sender' | 'receiver'
   const [pairingCode, setPairingCode] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -25,7 +25,7 @@ export function useFluxTransfer() {
     const engine = new EngineClass();
     engineRef.current = engine;
 
-    // Register event listeners
+    // Single source of truth: engine state drives React engineState
     engine.on('stateChange', (state) => {
       setEngineState(state);
       if (state === 'connected' && selectedFileRef.current && !engine.isTransferring && engine.dataChannel && engine.dataChannel.readyState === 'open') {
@@ -77,12 +77,10 @@ export function useFluxTransfer() {
           console.warn('[FluxTransfer] Auto-download error:', downloadErr);
         }
       }
-      setEngineState('completed');
     });
 
     engine.on('error', (err) => {
       setErrorMessage(typeof err === 'string' ? err : err?.message || 'Transfer error occurred');
-      setEngineState('failed');
     });
 
     return () => {
@@ -104,16 +102,9 @@ export function useFluxTransfer() {
     setPairingCode(code);
 
     try {
-      // Auto-trigger sendFile when peer connects and DataChannel opens
-      engineRef.current.onDataChannelOpen = () => {
-        if (selectedFileRef.current && !engineRef.current.isTransferring) {
-          engineRef.current.sendFile(selectedFileRef.current);
-        }
-      };
       engineRef.current.connect(code, code);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to create send session');
-      setEngineState('failed');
     }
   }, []);
 
@@ -126,7 +117,6 @@ export function useFluxTransfer() {
       engineRef.current.connect(cleanCode, cleanCode);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to connect to pairing code');
-      setEngineState('failed');
     }
   }, []);
 
@@ -134,10 +124,9 @@ export function useFluxTransfer() {
     selectedFileRef.current = null;
     if (engineRef.current) {
       try {
-        engineRef.current.disconnect();
+        engineRef.current.cancelTransfer();
       } catch (e) {}
     }
-    setEngineState('idle');
     setRole(null);
     setPairingCode('');
     setSelectedFile(null);

@@ -5,7 +5,7 @@
  * 1. Room pairing & role assignment (Initiator vs Joiner)
  * 2. Signaling message relay (SDP Offer/Answer & ICE candidates)
  * 3. File metadata frame structure & backpressure configuration
- * 4. Simulated P2P chunk streaming & complete Blob reassembly
+ * 4. Deterministic Metadata Readiness Protocol (Sender wait for metadata-ack, early chunk queueing)
  * 5. Completion acknowledgment ('ack-complete') lifecycle
  * 6. Cancellation protocol ('cancel')
  */
@@ -47,7 +47,7 @@ async function runTestSuite() {
 
     const clientSender = new WebSocket(WS_URL);
     await new Promise((resolve) => clientSender.on('open', resolve));
-    clientSender.send(JSON.stringify({ type: 'join-room', room: roomCode }));
+    clientSender.send(JSON.stringify({ type: 'join-room', room: roomCode, peerToken: 'sender_token_1' }));
 
     const senderJoined = await new Promise((resolve) => {
       clientSender.on('message', (raw) => {
@@ -69,7 +69,7 @@ async function runTestSuite() {
       });
     });
 
-    clientReceiver.send(JSON.stringify({ type: 'join-room', room: roomCode }));
+    clientReceiver.send(JSON.stringify({ type: 'join-room', room: roomCode, peerToken: 'receiver_token_1' }));
 
     const receiverJoined = await new Promise((resolve) => {
       clientReceiver.on('message', (raw) => {
@@ -95,7 +95,6 @@ async function runTestSuite() {
       });
     });
 
-    // Only Sender (initiator) sends Offer
     const dummyOffer = { type: 'offer', sdp: 'v=0\r\no=- 123 456 IN IP4 127.0.0.1' };
     clientSender.send(JSON.stringify({ type: 'offer', offer: dummyOffer }));
 
@@ -116,8 +115,8 @@ async function runTestSuite() {
     assert(receivedAnswer.answer.sdp === dummyAnswer.sdp, 'SDP Answer correctly relayed to Initiator');
 
 
-    // ── Test 3: Encrypted Chunk Protocol & Completion Ack ────────────────────
-    console.log('\n📋 Test Group 3: Encrypted Chunk Protocol & Completion Ack');
+    // ── Test 3: Encrypted Chunk Protocol & Metadata Ack ───────────────────────
+    console.log('\n📋 Test Group 3: Encrypted Chunk Protocol & Metadata Ack Handshake');
 
     const engine = new FluxWebRTCEngine();
     const sessionCode = '123456';
@@ -181,15 +180,60 @@ async function runTestSuite() {
     assert(ackMessage.type === 'ack-complete', 'Ack-complete message frame correctly structured');
 
 
-    // ── Test 4: Transfer Cancel Protocol ──────────────────────────────────────
-    console.log('\n📋 Test Group 4: Transfer Cancellation');
+    // ── Test 4: Bounded Early Chunk Queueing & Readiness Protocol ────────────
+    console.log('\n📋 Test Group 4: Bounded Early Chunk Queue & Metadata ACK');
 
-    const cancelMessage = { type: 'cancel' };
-    assert(cancelMessage.type === 'cancel', 'Cancel message frame correctly structured');
+    const receiverEngine = new FluxWebRTCEngine();
+    receiverEngine.sessionCode = sessionCode;
+
+    // Simulate metadata frame arriving when receiver is not yet ready
+    receiverEngine._receiverReady = false;
+    receiverEngine._earlyChunkQueue = [];
+
+    // Fabricate early binary chunk
+    const earlyChunk = await engine.encryptChunk(Buffer.from('early-data'), 0, aesKey);
+
+    // Feed binary chunk frame while _receiverReady is false
+    await receiverEngine._handleDataChannelMessage(earlyChunk.buffer);
+
+    assert(receiverEngine._earlyChunkQueue && receiverEngine._earlyChunkQueue.length === 1, 'Early binary chunk is queued when receiver is not yet ready');
+
+    // Feed metadata frame to initialize receiver
+    await receiverEngine._handleDataChannelMessage(JSON.stringify(metadata));
+
+    assert(receiverEngine._receiverReady === true, 'Receiver becomes ready after processing metadata & key derivation');
+    assert(receiverEngine._earlyChunkQueue === null, 'Early chunk queue is drained and cleared after receiver readiness');
 
 
-    // ── Test 5: Room Full Protection ──────────────────────────────────────────
-    console.log('\n📋 Test Group 5: Room Capacity Safeguard');
+    // ── Test 5: Metadata ACK Timeout Safeguard ──────────────────────────────
+    console.log('\n📋 Test Group 5: Metadata ACK Timeout Safeguard');
+
+    const senderEngine = new FluxWebRTCEngine();
+    let timeoutCaught = false;
+
+    try {
+      await senderEngine._waitForMetadataAck(100); // 100ms test timeout
+    } catch (err) {
+      timeoutCaught = err.message.includes('timed out');
+    }
+
+    assert(timeoutCaught === true, 'Sender correctly times out if metadata-ack is not received');
+
+
+    // ── Test 6: Metadata Initialization Error Handling ──────────────────────
+    console.log('\n📋 Test Group 6: Metadata Error Protocol');
+
+    let errorHandled = false;
+    senderEngine.on('error', () => { errorHandled = true; });
+
+    const metadataErrorMsg = JSON.stringify({ type: 'metadata-error', error: 'Storage initialization error' });
+    await senderEngine._handleDataChannelMessage(metadataErrorMsg);
+
+    assert(errorHandled === true, 'Sender transitions to error state when receiver returns metadata-error');
+
+
+    // ── Test 7: Room Full Safeguard ──────────────────────────────────────────
+    console.log('\n📋 Test Group 7: Room Capacity Safeguard');
 
     const clientExtra = new WebSocket(WS_URL);
     await new Promise((resolve) => clientExtra.on('open', resolve));
@@ -201,7 +245,7 @@ async function runTestSuite() {
       });
     });
 
-    clientExtra.send(JSON.stringify({ type: 'join-room', room: roomCode }));
+    clientExtra.send(JSON.stringify({ type: 'join-room', room: roomCode, peerToken: 'token_extra' }));
     const roomFullMsg = await roomFullPromise;
 
     assert(roomFullMsg.type === 'room-full', 'Third client attempt to join occupied room is rejected with "room-full"');
