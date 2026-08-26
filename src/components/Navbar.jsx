@@ -1,20 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { ArrowUpDown, Sun, Moon } from 'lucide-react';
+import { useCircularTheme } from '../hooks/useCircularTheme.js';
 
 export default function Navbar({ onToggleZen }) {
-  const [theme, setTheme] = useState('light');
-
-  const toggleTheme = () => {
-    const nextTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(nextTheme);
-    if (nextTheme === 'dark') {
-      document.body.classList.add('dark-theme');
-    } else {
-      document.body.classList.remove('dark-theme');
-    }
-  };
-
-  const isDark = theme === 'dark';
+  const { isDark, toggleTheme } = useCircularTheme('light');
 
   return (
     <header
@@ -44,8 +33,8 @@ export default function Navbar({ onToggleZen }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {/* Apple Liquid Theme Change Toggle Button */}
         <button
-          onClick={toggleTheme}
-          title={`Switch to ${isDark ? 'Light' : 'Dark'} Mode`}
+          onClick={(e) => toggleTheme(e)}
+          title={`Switch to ${isDark ? 'Light' : 'Dark'} Mode (Press 'T')`}
           style={{
             position: 'relative',
             width: '92px',

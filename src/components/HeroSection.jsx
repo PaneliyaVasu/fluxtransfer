@@ -12,6 +12,8 @@ export default function HeroSection() {
           src="/assets/glass-cloud-hero.png"
           alt="3D Iridescent Liquid Glass Cloud"
           className="hero-cloud-light"
+          loading="eager"
+          decoding="sync"
         />
 
         {/* Dark 3D Glass Cloud Background Image */}
@@ -19,6 +21,8 @@ export default function HeroSection() {
           src="/assets/glass-cloud-hero-dark.png"
           alt="3D Iridescent Liquid Glass Cloud Dark"
           className="hero-cloud-dark"
+          loading="eager"
+          decoding="sync"
         />
 
         {/* Overlay Content Centered Inside/Over the 3D Glass Cloud */}

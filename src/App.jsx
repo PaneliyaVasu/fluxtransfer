@@ -4,7 +4,6 @@ import HeroSection from './components/HeroSection.jsx';
 import TransferDashboard from './components/TransferDashboard.jsx';
 import ZenDrawer from './components/ZenDrawer.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
-import FAQSection from './components/FAQSection.jsx';
 import { useFluxTransfer } from './hooks/useFluxTransfer.js';
 
 export default function App() {
@@ -52,9 +51,6 @@ export default function App() {
 
         {/* Transfer Dashboard */}
         <TransferDashboard transfer={transfer} addToast={addToast} />
-
-        {/* FAQ Section */}
-        <FAQSection />
       </main>
 
       {/* Bottom Glass Footer Attached to Bottom */}
