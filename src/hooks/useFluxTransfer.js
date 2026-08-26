@@ -167,8 +167,8 @@ export function useFluxTransfer() {
     setRole('sender');
     setErrorMessage('');
 
-    // Generate 8-character cryptographically secure session code
-    const code = generateSessionCode(8);
+    // Generate 6-digit cryptographically secure numeric session code
+    const code = generateSessionCode(6);
     setPairingCode(code);
 
     try {

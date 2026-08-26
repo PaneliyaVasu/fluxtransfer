@@ -13,6 +13,7 @@ const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity b
 const ICE_RECONNECT_TIMEOUT_MS = 5000; // 5 seconds recovery window for ICE disconnects before attempting restart
 const MAX_ICE_RESTART_ATTEMPTS = 2; // Maximum ICE restart negotiation attempts per transfer
 
+const NUMERIC_ALPHABET = '0123456789';
 const ALPHANUMERIC_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
 function getCryptoObj() {
@@ -35,14 +36,14 @@ function getCryptoObj() {
 }
 
 /**
- * Generate a cryptographically secure, unbiased session code of specified length.
- * Default: 8 alphanumeric characters (~47.6 bits of entropy).
+ * Generate a cryptographically secure 6-digit numeric session code.
+ * Default: 6 numeric digits (0-9).
  * Uses rejection sampling to eliminate modulo bias.
  */
-function generateSessionCode(length = 8) {
+function generateSessionCode(length = 6) {
   const cryptoObj = getCryptoObj();
-  const alphabetLen = ALPHANUMERIC_ALPHABET.length; // 62
-  const maxUnbiasedByte = 256 - (256 % alphabetLen); // 248 (bytes >= 248 rejected)
+  const alphabetLen = NUMERIC_ALPHABET.length; // 10
+  const maxUnbiasedByte = 256 - (256 % alphabetLen); // 250 (bytes >= 250 rejected)
 
   let code = '';
   while (code.length < length) {
@@ -58,7 +59,7 @@ function generateSessionCode(length = 8) {
     for (let i = 0; i < randomBytes.length && code.length < length; i++) {
       const byte = randomBytes[i];
       if (byte < maxUnbiasedByte) {
-        code += ALPHANUMERIC_ALPHABET[byte % alphabetLen];
+        code += NUMERIC_ALPHABET[byte % alphabetLen];
       }
     }
   }
@@ -69,14 +70,17 @@ function generateSessionCode(length = 8) {
 function isValidSessionCode(code) {
   if (!code || typeof code !== 'string') return false;
   const trimmed = code.trim();
-  return /^[a-zA-Z0-9]{8}$/.test(trimmed) || /^[0-9]{6}$/.test(trimmed);
+  return /^[0-9]{6}$/.test(trimmed);
 }
 
 const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
   'http://localhost:5173',
   'http://localhost:4173',
   'http://localhost:8080',
   'http://127.0.0.1:5173',
+  'http://127.0.0.1:4173',
   'http://127.0.0.1:8080'
 ];
 

@@ -158,26 +158,30 @@ async function runSecurityTestSuite() {
   assert(!logsPlaintext, 'No plaintext chunk buffers are written to console logs');
 
   // Test 9: Session Code Entropy & Format
-  console.log('\n📋 Test 9: Session Code Format & Entropy');
-  const testCode = generateSessionCode(8);
-  assert(testCode.length === 8, 'Generated session code length === 8');
-  assert(/^[a-zA-Z0-9]{8}$/.test(testCode), 'Every character belongs to approved alphanumeric alphabet [a-zA-Z0-9]');
+  console.log('\n📋 Test 9: 6-Digit Numeric Session Code Format & Entropy');
+  const testCode = generateSessionCode(6);
+  assert(testCode.length === 6, 'Generated session code length === 6');
+  assert(/^[0-9]{6}$/.test(testCode), 'Every character belongs to numeric digits [0-9]');
 
   // Uniqueness check over 10,000 samples
   const sampleSet = new Set();
   for (let i = 0; i < 10000; i++) {
-    sampleSet.add(generateSessionCode(8));
+    sampleSet.add(generateSessionCode(6));
   }
-  assert(sampleSet.size === 10000, '0 collisions across 10,000 generated session codes');
+  assert(sampleSet.size > 9900, 'High entropy across 10,000 generated 6-digit session codes');
 
-  // Test 10: Session Code Validation Rules
-  console.log('\n📋 Test 10: Session Code Validation Rules');
-  assert(isValidSessionCode('aB3xK9pQ') === true, 'Accepts valid 8-character code "aB3xK9pQ"');
-  assert(isValidSessionCode('123456') === true, 'Accepts legacy 6-digit backward-compatible code "123456"');
-  assert(isValidSessionCode('abcdefg') === false, 'Rejects 7-character code "abcdefg"');
-  assert(isValidSessionCode('abcdefghi') === false, 'Rejects 9-character code "abcdefghi"');
-  assert(isValidSessionCode('abc-1234') === false, 'Rejects code containing hyphen "abc-1234"');
-  assert(isValidSessionCode('abc_1234') === false, 'Rejects code containing underscore "abc_1234"');
+  // Test 10: 6-Digit Session Code Validation Rules
+  console.log('\n📋 Test 10: 6-Digit Session Code Validation Rules');
+  assert(isValidSessionCode('123456') === true, 'Accepts valid 6-digit code "123456"');
+  assert(isValidSessionCode('000001') === true, 'Accepts valid 6-digit code "000001"');
+  assert(isValidSessionCode('999999') === true, 'Accepts valid 6-digit code "999999"');
+  assert(isValidSessionCode('12345') === false, 'Rejects 5-digit code "12345"');
+  assert(isValidSessionCode('1234567') === false, 'Rejects 7-digit code "1234567"');
+  assert(isValidSessionCode('12345A') === false, 'Rejects code containing letter "12345A"');
+  assert(isValidSessionCode('ABCDEF') === false, 'Rejects alphanumeric code "ABCDEF"');
+  assert(isValidSessionCode('A12345') === false, 'Rejects code with leading letter "A12345"');
+  assert(isValidSessionCode('12 3456') === false, 'Rejects code containing space "12 3456"');
+  assert(isValidSessionCode('aB3xK9pQ') === false, 'Rejects 8-character code "aB3xK9pQ"');
   assert(isValidSessionCode('') === false, 'Rejects empty string ""');
 
   // Test 11: WebSocket Origin Header Validation & HTTP Security Headers
