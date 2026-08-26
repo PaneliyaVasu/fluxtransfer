@@ -57,7 +57,25 @@ export function useFluxTransfer() {
         setReceivedFileBlob(blob);
         const url = URL.createObjectURL(blob);
         setReceivedFileUrl(url);
-        setReceivedFileName(fileName || 'received-file');
+        const finalName = fileName || 'received-file';
+        setReceivedFileName(finalName);
+
+        // Automatic Download Trigger on File Transfer Completion
+        try {
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = finalName;
+          a.style.display = 'none';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            if (document.body.contains(a)) {
+              document.body.removeChild(a);
+            }
+          }, 1000);
+        } catch (downloadErr) {
+          console.warn('[FluxTransfer] Auto-download error:', downloadErr);
+        }
       }
       setEngineState('completed');
     });
