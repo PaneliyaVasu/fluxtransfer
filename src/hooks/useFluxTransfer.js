@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import FluxWebRTCEngine from '../client/webrtc-engine.js';
+import FluxWebRTCEngine from '../engine/webrtc-engine.js';
 
 export function useFluxTransfer() {
   const [engineState, setEngineState] = useState('idle'); // idle, connecting, connected, transferring, completed, failed

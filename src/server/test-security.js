@@ -13,7 +13,8 @@
  */
 
 const { webcrypto } = require('crypto');
-const FluxWebRTCEngine = require('../client/webrtc-engine.js');
+const EngineModule = require('../engine/webrtc-engine.js');
+const FluxWebRTCEngine = EngineModule.default || EngineModule;
 
 let passed = 0;
 let failed = 0;
@@ -129,7 +130,7 @@ async function runSecurityTestSuite() {
 
   // Test 8: Zero Secret Leakage in Logs
   console.log('\n📋 Test 8: Console Log Leakage Audit');
-  const engineSource = require('fs').readFileSync('src/client/webrtc-engine.js', 'utf8');
+  const engineSource = require('fs').readFileSync('src/engine/webrtc-engine.js', 'utf8');
 
   const logsKey = engineSource.includes('console.log(this.aesKey)') || engineSource.includes('console.log(aesKey)');
   const logsPin = engineSource.includes('console.log(this.sessionCode)') || engineSource.includes('console.log(sessionCode)');

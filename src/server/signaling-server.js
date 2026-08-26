@@ -1,9 +1,9 @@
 /**
  * FluxTransfer — Unified Server (Static Files + WebRTC Signaling)
  *
- * Serves static client files AND WebSocket signaling on ONE port.
+ * Serves compiled production client files AND WebSocket signaling on ONE port.
  * This is the correct setup for cross-network deployment:
- *   - Static files: GET /  → serves src/client/
+ *   - Static files: GET /  → serves dist/
  *   - Signaling:    WS /   → WebSocket upgrade
  *
  * Deploy on any cloud (Render, Railway, Fly.io, Heroku) and both
@@ -19,7 +19,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = process.env.PORT || 8080;
 const distDir = path.join(__dirname, '..', '..', 'dist');
-const STATIC_DIR = fs.existsSync(distDir) ? distDir : path.join(__dirname, '..', 'client');
+const STATIC_DIR = distDir;
 
 // ─── MIME Types ───────────────────────────────────────────────────────────────
 const MIME = {

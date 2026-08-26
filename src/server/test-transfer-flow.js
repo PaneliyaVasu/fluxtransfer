@@ -13,7 +13,8 @@
 const { WebSocket } = require('ws');
 const { spawn } = require('child_process');
 const { webcrypto } = require('crypto');
-const FluxWebRTCEngine = require('../client/webrtc-engine.js');
+const EngineModule = require('../engine/webrtc-engine.js');
+const FluxWebRTCEngine = EngineModule.default || EngineModule;
 
 async function runTestSuite() {
   console.log('\n==================================================');

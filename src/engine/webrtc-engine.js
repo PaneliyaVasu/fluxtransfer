@@ -4,13 +4,13 @@
  * Features:
  * - Native WebRTC RTCPeerConnection & RTCDataChannel
  * - WebSocket Signaling client for room pairing & SDP/ICE exchange
- * - Application-level E2EE (AES-256-GCM via Web Crypto API, derived using PBKDF2 with 100k iterations)
+ * - Application-level E2EE (AES-256 / SHA-256 keystream cipher via Web Crypto API, derived with PBKDF2 salt)
  * - Unique 12-byte random IV/nonce per encrypted chunk
- * - Zero-RAM OPFS streaming storage on receiver side (with RAM chunk fallback for legacy environments)
- * - Off-main-thread SHA-256 file integrity calculation & verification via hash-worker.js
+ * - In-memory chunk stream reassembly
+ * - SHA-256 file integrity calculation & verification
  * - Event-driven, non-bypassing backpressure management
  * - Deterministic transfer state machine (idle, connecting, connected, transferring, completed, failed, cancelled)
- * - Application-level P2P control messaging interface (for Flux Zen multiplayer)
+ * - Application-level P2P control messaging interface (for Flux Zen ambient mode)
  * - Zero logging of secrets, keys, PINs, or plaintext data
  */
 
@@ -308,8 +308,8 @@
     }
 
     /**
-     * Encrypt a chunk ArrayBuffer using keystream cipher
-     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext]
+     * Encrypt a chunk ArrayBuffer using keystream cipher with authenticated integrity tag
+     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Tag (16B)][Ciphertext]
      */
     async encryptChunk(chunkBuffer, chunkIndex, keyBytes) {
       const cryptoObj = getCrypto();
@@ -337,30 +337,61 @@
         outputBytes[i] = inputBytes[i] ^ keyStream[ksPos++];
       }
 
-      const frame = new Uint8Array(4 + 12 + outputBytes.byteLength);
+      // Compute 16-byte authentication tag
+      const tagSeed = new Uint8Array(32 + 12 + 4 + outputBytes.byteLength);
+      tagSeed.set(keyBytes, 0);
+      tagSeed.set(iv, 32);
+      const tagView = new DataView(tagSeed.buffer);
+      tagView.setUint32(44, chunkIndex, false);
+      tagSeed.set(outputBytes, 48);
+      const tag = this._sha256(tagSeed).subarray(0, 16);
+
+      const frame = new Uint8Array(4 + 12 + 16 + outputBytes.byteLength);
       const view = new DataView(frame.buffer);
       view.setUint32(0, chunkIndex, false);
       frame.set(iv, 4);
-      frame.set(outputBytes, 16);
+      frame.set(tag, 16);
+      frame.set(outputBytes, 32);
       return frame;
     }
 
     /**
-     * Decrypt a chunk frame buffer using keystream cipher
+     * Decrypt a chunk frame buffer and verify authenticated tag
      */
     async decryptFrame(frameBuffer, keyBytes) {
       const buffer = frameBuffer instanceof ArrayBuffer
         ? frameBuffer
         : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
 
-      if (buffer.byteLength < 16) {
+      if (buffer.byteLength < 32) {
         throw new Error('Invalid transfer frame: undersized payload');
       }
 
       const view = new DataView(buffer);
       const chunkIndex = view.getUint32(0, false);
       const iv = new Uint8Array(buffer, 4, 12);
-      const encryptedPayload = new Uint8Array(buffer, 16);
+      const receivedTag = new Uint8Array(buffer, 16, 16);
+      const encryptedPayload = new Uint8Array(buffer, 32);
+
+      // Verify authentication tag before decryption
+      const tagSeed = new Uint8Array(32 + 12 + 4 + encryptedPayload.byteLength);
+      tagSeed.set(keyBytes, 0);
+      tagSeed.set(iv, 32);
+      const tagView = new DataView(tagSeed.buffer);
+      tagView.setUint32(44, chunkIndex, false);
+      tagSeed.set(encryptedPayload, 48);
+      const expectedTag = this._sha256(tagSeed).subarray(0, 16);
+
+      let tagMatch = true;
+      for (let t = 0; t < 16; t++) {
+        if (receivedTag[t] !== expectedTag[t]) {
+          tagMatch = false;
+          break;
+        }
+      }
+      if (!tagMatch) {
+        throw new Error('Authentication tag mismatch: ciphertext corrupted or wrong decryption key');
+      }
 
       const outputBytes = new Uint8Array(encryptedPayload.length);
 
@@ -1167,16 +1198,20 @@
     }
   }
 
-  // Export
   if (typeof globalThis !== 'undefined') {
     globalThis.FluxWebRTCEngine = FluxWebRTCEngine;
   }
   if (typeof window !== 'undefined') {
     window.FluxWebRTCEngine = FluxWebRTCEngine;
   }
-})(typeof window !== 'undefined' ? window : globalThis);
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
 
-export default (typeof window !== 'undefined' && window.FluxWebRTCEngine) || (typeof globalThis !== 'undefined' && globalThis.FluxWebRTCEngine);
+const FluxWebRTCEngine = (typeof window !== 'undefined' && window.FluxWebRTCEngine) ||
+  (typeof globalThis !== 'undefined' && globalThis.FluxWebRTCEngine);
+
+export { FluxWebRTCEngine };
+export default FluxWebRTCEngine;
+
 
 
 

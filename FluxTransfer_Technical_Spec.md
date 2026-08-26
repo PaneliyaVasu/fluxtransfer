@@ -147,14 +147,14 @@ These figures assume the protocol removes software-level inefficiencies (slow ha
 
 The current prototype implements the **internet-only WebRTC architecture**:
 
-- **Signaling Layer**: PeerJS is used only to exchange the information required to establish WebRTC peer connections.
-- **Pairing**: The sender generates an **8-digit numeric code** and a QR URL containing `?code=12345678`.
-- **Parallel Transport**: The receiver opens up to **4 independent PeerJS/WebRTC data connections**. A handshake tells the sender which stream indexes successfully opened.
-- **Chunking**: Files are encrypted and divided into 64 KiB frames. Each frame carries a chunk index so the receiver can reassemble data arriving concurrently across streams.
-- **Flow Control**: Each data channel uses `bufferedAmount` backpressure to avoid unbounded buffering.
-- **Security**: AES-256-GCM encryption uses a per-transfer random salt and a key derived from the numeric session code with PBKDF2-SHA-256.
-- **Integrity**: The receiver reconstructs the file and verifies the SHA-256 hash before acknowledging completion.
-- **Removed paths**: UDP discovery, local HTTP transfer, local-server staging, and insecure transfer fallbacks are not part of this build.
+- **Signaling Layer**: Custom WebSocket signaling server (`src/server/signaling-server.js`) relays SDP offers, answers, and ICE candidates with JSON validation and per-IP rate limiting (no third-party signaling relays).
+- **Pairing**: The sender generates a **6-digit numeric pairing PIN** and an interactive QR code containing `?join=123456`.
+- **Direct P2P Transport**: Devices establish a direct WebRTC `RTCPeerConnection` with a high-throughput `RTCDataChannel` and automatic STUN/TURN ICE negotiation.
+- **Chunking & Authentication**: Files are divided into 64 KiB frames. Each frame carries a 4-byte chunk index, 12-byte random IV/nonce, 16-byte authentication tag, and encrypted payload.
+- **Flow Control**: Event-driven `bufferedAmount` backpressure with high (4 MB) and low (1 MB) watermark thresholds.
+- **Security**: Authenticated E2E encryption with keys derived via PBKDF2 (100k iterations) and a 16-byte cryptographically random salt.
+- **Integrity**: The receiver reconstructs the file and verifies the full SHA-256 hash before acknowledging completion.
+- **Removed paths**: UDP discovery, local HTTP staging, and insecure fallback transfers are omitted from this build.
 
 ## 11. Open Questions / Future Work
 

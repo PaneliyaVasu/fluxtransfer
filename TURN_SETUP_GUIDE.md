@@ -110,7 +110,7 @@ If you do not want to manage Coturn server bandwidth and infrastructure, use a m
 
 ## 4. Integrating TURN Credentials into FluxTransfer Client
 
-In `src/client/webrtc-engine.js` or when instantiating `FluxWebRTCEngine`, pass your custom `iceServers` array:
+In `src/engine/webrtc-engine.js` or when instantiating `FluxWebRTCEngine`, pass your custom `iceServers` array:
 
 ```javascript
 const customIceServers = [

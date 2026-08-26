@@ -2,7 +2,7 @@
   "name": "fluxtransfer",
   "version": "3.0.0",
   "private": true,
-  "description": "Internet-first peer-to-peer file transfer using WebRTC and PeerJS",
+  "description": "Internet-first peer-to-peer file transfer using WebRTC and WebSocket signaling",
   "scripts": {
     "dev": "concurrently -n \"SERVER,CLIENT\" -c \"magenta.bold,cyan.bold\" \"npm run dev:server\" \"npm run dev:client -- --host\"",
     "dev:all": "concurrently -n \"SERVER,CLIENT\" -c \"magenta.bold,cyan.bold\" \"npm run dev:server\" \"npm run dev:client\"",
@@ -11,13 +11,12 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node src/server/signaling-server.js",
-    "dev:static": "npx serve --no-request-logging src/client"
+    "test": "node src/server/test-signaling.js && node src/server/test-transfer-flow.js && node src/server/test-security.js"
   },
   "keywords": [
     "webrtc",
     "p2p",
-    "file-transfer",
-    "peerjs"
+    "file-transfer"
   ],
   "license": "MIT",
   "dependencies": {
