@@ -437,6 +437,37 @@ async function runSecurityTestSuite() {
 
   assert(oooErrorTriggered === true, 'Out-of-order chunk (got 5 when expecting 2) is rejected safely with ERR_OUT_OF_ORDER_CHUNK');
 
+  // Test 17: Production TURN Configuration & Graceful Shutdown Suite
+  console.log('\n📋 Test 17: Production TURN Configuration & Graceful Shutdown Suite');
+  const { getIceServers, DEFAULT_STUN_SERVERS, DEFAULT_DEV_ICE_SERVERS } = APP_CONFIG;
+
+  // Test A: Custom VITE_ICE_SERVERS parsed correctly
+  const customIceVal = JSON.stringify([{ urls: 'turn:custom.turn.com:3478', username: 'u', credential: 'p' }]);
+  const parsedIce = getIceServers(customIceVal, true);
+  assert(parsedIce[0].urls === 'turn:custom.turn.com:3478', 'Custom VITE_ICE_SERVERS parsed correctly');
+
+  // Test B: Production mode with missing VITE_ICE_SERVERS falls back to STUN-only
+  const prodIce = getIceServers(undefined, true);
+  assert(prodIce.length === DEFAULT_STUN_SERVERS.length, 'Production mode with missing VITE_ICE_SERVERS falls back to STUN-only');
+  assert(!prodIce.some(s => typeof s.urls === 'string' && s.urls.startsWith('turn:')), 'Production fallback contains 0 community TURN credentials');
+
+  // Test C: Development mode with missing VITE_ICE_SERVERS uses dev fallback
+  const devIce = getIceServers(undefined, false);
+  assert(devIce.length === DEFAULT_DEV_ICE_SERVERS.length, 'Development mode with missing VITE_ICE_SERVERS uses development fallback');
+
+  // Test D: Malformed VITE_ICE_SERVERS JSON fails safely
+  const malformedIce = getIceServers('{ bad json }', true);
+  assert(malformedIce.length === DEFAULT_STUN_SERVERS.length, 'Malformed VITE_ICE_SERVERS JSON fails safely to defaults');
+
+  // Test E: Graceful Shutdown Idempotency
+  const signalingModule = require('./signaling-server.js');
+  if (signalingModule && typeof signalingModule.shutdownServer === 'function') {
+    const firstShutdown = await signalingModule.shutdownServer('test-suite', 100);
+    const secondShutdown = await signalingModule.shutdownServer('test-suite', 100);
+    assert(firstShutdown === true, 'First shutdown call executes cleanup sequence');
+    assert(secondShutdown === false, 'Second shutdown call is ignored idempotently without errors');
+  }
+
   // Clean up manifest
   await deleteManifest('test_transfer_123');
 

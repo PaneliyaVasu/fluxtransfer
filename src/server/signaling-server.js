@@ -18,6 +18,9 @@ const distDir = path.join(__dirname, '..', '..', 'dist');
 const STATIC_DIR = distDir;
 const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling cleanup
 
+let isShuttingDown = false;
+let forceShutdownTimer = null;
+
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:4173',
@@ -150,6 +153,11 @@ function serveStatic(req, res) {
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   if (req.url === '/health' || req.url === '/api/health') {
+    if (isShuttingDown) {
+      res.writeHead(503, getSecurityHeaders('application/json', { 'Access-Control-Allow-Origin': '*' }));
+      res.end(JSON.stringify({ status: 'shutting_down', service: 'FluxTransfer Signaling Server' }));
+      return;
+    }
     const healthData = JSON.stringify({
       status: 'ok',
       service: 'FluxTransfer Signaling Server',
@@ -214,6 +222,12 @@ const wss = new WebSocketServer({
 });
 
 server.on('upgrade', (request, socket, head) => {
+  if (isShuttingDown) {
+    socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nService Unavailable: Server shutting down');
+    socket.destroy();
+    return;
+  }
+
   const origin = request.headers.origin;
 
   if (!isOriginAllowed(origin)) {
@@ -451,8 +465,59 @@ wss.on('close', () => {
   clearInterval(ipRateLimitCleanupTimer);
 });
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+// ─── Graceful Shutdown ────────────────────────────────────────────────────────
+function shutdownServer(reason = 'SIGTERM', timeoutMs = 5000) {
+  if (isShuttingDown) {
+    return Promise.resolve(false);
+  }
+  isShuttingDown = true;
+  console.log(`\n🛑 [Signaling Server] Graceful shutdown initiated (${reason})...`);
+
+  // Stop background timers
+  clearInterval(pingInterval);
+  clearInterval(ipRateLimitCleanupTimer);
+
+  // Close connected WebSocket clients cleanly with 1001 (Going Away) status
+  wss.clients.forEach((ws) => {
+    try {
+      send(ws, { type: 'error', message: 'Signaling server shutting down' });
+      ws.close(1001, 'Server shutting down');
+    } catch (_) {}
+  });
+
+  return new Promise((resolve) => {
+    forceShutdownTimer = setTimeout(() => {
+      console.warn('⚠️ [Signaling Server] Shutdown safety timeout reached.');
+      if (require.main === module) process.exit(1);
+      resolve(true);
+    }, timeoutMs);
+
+    wss.close(() => {
+      server.close(() => {
+        if (forceShutdownTimer) clearTimeout(forceShutdownTimer);
+        console.log('✅ [Signaling Server] Clean shutdown complete.');
+        if (require.main === module) process.exit(0);
+        resolve(true);
+      });
+    });
+  });
+}
+
+// ─── Process Signal & Exception Handlers ─────────────────────────────────────
 if (require.main === module) {
+  process.on('SIGTERM', () => shutdownServer('SIGTERM'));
+  process.on('SIGINT', () => shutdownServer('SIGINT'));
+
+  process.on('uncaughtException', (err) => {
+    console.error('💥 [Signaling Server] Uncaught Exception:', err);
+    shutdownServer('uncaughtException', 3000);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    console.error('💥 [Signaling Server] Unhandled Promise Rejection:', reason);
+    shutdownServer('unhandledRejection', 3000);
+  });
+
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 FluxTransfer running on http://0.0.0.0:${PORT}`);
     console.log(`📡 WebSocket signaling ready on port ${PORT}`);
@@ -471,6 +536,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getClientIp,
     getSecurityHeaders,
     isOriginAllowed,
-    getAllowedOrigins
+    getAllowedOrigins,
+    shutdownServer
   };
 }

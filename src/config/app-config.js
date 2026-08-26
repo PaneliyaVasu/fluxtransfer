@@ -90,10 +90,15 @@ function getAllowedOrigins() {
   return DEFAULT_ALLOWED_ORIGINS;
 }
 
-const DEFAULT_ICE_SERVERS = [
+const DEFAULT_STUN_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' }
+];
+
+const DEFAULT_DEV_ICE_SERVERS = [
+  ...DEFAULT_STUN_SERVERS,
   { urls: 'stun:openrelay.metered.ca:80' },
   {
     urls: 'turn:openrelay.metered.ca:80',
@@ -114,20 +119,49 @@ const DEFAULT_ICE_SERVERS = [
     urls: 'turn:openrelay.metered.ca:80?transport=tcp',
     username: 'openrelayproject',
     credential: 'openrelayproject'
-  },
-  { urls: 'stun:stun.cloudflare.com:3478' }
+  }
 ];
 
-function getIceServers() {
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ICE_SERVERS) {
+const DEFAULT_ICE_SERVERS = DEFAULT_DEV_ICE_SERVERS;
+
+function isProductionEnvironment() {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    if (import.meta.env.MODE === 'production' || import.meta.env.PROD === true) return true;
+  }
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.NODE_ENV === 'production') return true;
+  }
+  return false;
+}
+
+function getIceServers(overrideEnvVal, overrideIsProd) {
+  let envVal = overrideEnvVal;
+  if (envVal === undefined) {
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ICE_SERVERS) {
+      envVal = import.meta.env.VITE_ICE_SERVERS;
+    } else if (typeof process !== 'undefined' && process.env && process.env.VITE_ICE_SERVERS) {
+      envVal = process.env.VITE_ICE_SERVERS;
+    }
+  }
+
+  if (typeof envVal === 'string' && envVal.trim()) {
     try {
-      const parsed = JSON.parse(import.meta.env.VITE_ICE_SERVERS);
+      const parsed = JSON.parse(envVal.trim());
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed;
       }
-    } catch (_) {}
+      console.warn('[FluxTransfer Config] VITE_ICE_SERVERS parsed but is not a non-empty array.');
+    } catch (err) {
+      console.warn('[FluxTransfer Config] Malformed VITE_ICE_SERVERS JSON format.');
+    }
   }
-  return DEFAULT_ICE_SERVERS;
+
+  const isProd = overrideIsProd !== undefined ? overrideIsProd : isProductionEnvironment();
+  if (isProd) {
+    // In production without valid VITE_ICE_SERVERS, use STUN-only to avoid silent community TURN dependency
+    return DEFAULT_STUN_SERVERS;
+  }
+  return DEFAULT_DEV_ICE_SERVERS;
 }
 
 function getDefaultSignalingUrl() {
@@ -167,7 +201,9 @@ const APP_CONFIG = {
   ALPHANUMERIC_ALPHABET,
   generateSessionCode,
   isValidSessionCode,
-  getAllowedOrigins,
+  DEFAULT_ALLOWED_ORIGINS,
+  DEFAULT_STUN_SERVERS,
+  DEFAULT_DEV_ICE_SERVERS,
   DEFAULT_ICE_SERVERS,
   getIceServers,
   getDefaultSignalingUrl,
@@ -192,6 +228,8 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node 
   module.exports.generateSessionCode = generateSessionCode;
   module.exports.isValidSessionCode = isValidSessionCode;
   module.exports.getAllowedOrigins = getAllowedOrigins;
+  module.exports.DEFAULT_STUN_SERVERS = DEFAULT_STUN_SERVERS;
+  module.exports.DEFAULT_DEV_ICE_SERVERS = DEFAULT_DEV_ICE_SERVERS;
   module.exports.DEFAULT_ICE_SERVERS = DEFAULT_ICE_SERVERS;
   module.exports.getIceServers = getIceServers;
   module.exports.getDefaultSignalingUrl = getDefaultSignalingUrl;
@@ -213,6 +251,8 @@ export {
   generateSessionCode,
   isValidSessionCode,
   getAllowedOrigins,
+  DEFAULT_STUN_SERVERS,
+  DEFAULT_DEV_ICE_SERVERS,
   DEFAULT_ICE_SERVERS,
   getIceServers,
   getDefaultSignalingUrl,
