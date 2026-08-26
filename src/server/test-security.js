@@ -405,6 +405,23 @@ async function runSecurityTestSuite() {
 
   assert(sentResponse !== null && sentResponse.ok === false, 'Resume request rejected for invalid resumeToken');
 
+  // Test 15F: Out-of-Order Chunk Rejection (ERR_OUT_OF_ORDER_CHUNK)
+  const oooEngine = new FluxWebRTCEngine();
+  oooEngine.incomingMeta = { totalChunks: 10, chunkSize: 128 * 1024, size: 1024 * 1024 };
+  oooEngine.aesKey = aesKey;
+  oooEngine.receivedChunksCount = 2; // expects chunk 2 next
+
+  let oooErrorTriggered = false;
+  oooEngine.on('error', (err, code) => {
+    if (code === 'ERR_OUT_OF_ORDER_CHUNK') oooErrorTriggered = true;
+  });
+
+  // Mock decryptFrame returning out-of-order chunk 5 when expected is 2
+  oooEngine.decryptFrame = async () => ({ chunkIndex: 5, chunkData: new ArrayBuffer(100) });
+  await oooEngine._processBinaryChunkFrame(new ArrayBuffer(100));
+
+  assert(oooErrorTriggered === true, 'Out-of-order chunk (got 5 when expecting 2) is rejected safely with ERR_OUT_OF_ORDER_CHUNK');
+
   // Clean up manifest
   await deleteManifest('test_transfer_123');
 

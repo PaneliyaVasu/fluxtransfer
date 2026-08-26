@@ -707,8 +707,13 @@ class FluxWebRTCEngine {
       return;
     }
 
-    const lastContiguous = (this.receivedChunksCount > 0) ? (this.receivedChunksCount - 1) : -1;
-    const isDuplicate = chunkIndex <= lastContiguous;
+    const expectedNextChunk = this.receivedChunksCount;
+    if (chunkIndex > expectedNextChunk) {
+      this._handleTransferFailure(`Out-of-order chunk received (Expected chunk ${expectedNextChunk}, got chunk ${chunkIndex})`, 'ERR_OUT_OF_ORDER_CHUNK');
+      return;
+    }
+
+    const isDuplicate = chunkIndex < expectedNextChunk;
 
     // Write chunk to storage (idempotent write at offset)
     if (this.storage) {
