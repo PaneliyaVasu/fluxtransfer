@@ -28,11 +28,11 @@ export function useCircularTheme(initialTheme = 'light') {
       y = event.clientY;
     }
 
-    // Maximum distance from click point to the furthest screen corner
+    // Maximum distance from click point to the furthest screen corner (with safety padding to cover high-DPI/subpixel boundaries)
     const maxRadius = Math.hypot(
       Math.max(x, window.innerWidth - x),
       Math.max(y, window.innerHeight - y)
-    );
+    ) * 1.15 + 50;
 
     const applyThemeClasses = () => {
       setTheme(nextTheme);
@@ -47,10 +47,9 @@ export function useCircularTheme(initialTheme = 'light') {
 
     const doc = document;
     if (typeof doc !== 'undefined' && typeof doc.startViewTransition === 'function') {
-      doc.body.classList.add('view-transition-active');
-
       const transition = doc.startViewTransition(() => {
         flushSync(() => {
+          doc.body.classList.add('view-transition-active');
           applyThemeClasses();
         });
       });
@@ -71,7 +70,11 @@ export function useCircularTheme(initialTheme = 'light') {
         );
 
         anim.onfinish = () => {
-          doc.body.classList.remove('view-transition-active');
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              doc.body.classList.remove('view-transition-active');
+            }, 60);
+          });
         };
       }).catch(() => {
         doc.body.classList.remove('view-transition-active');

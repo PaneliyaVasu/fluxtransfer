@@ -72,15 +72,21 @@ body:not(.view-transition-active) *::after {
   mix-blend-mode: normal !important;
 }
 
+::view-transition-image-pair(root) {
+  isolation: isolate !important;
+}
+
 ::view-transition-old(root) {
   z-index: 1 !important;
-  display: block;
+  display: block !important;
+  opacity: 1 !important;
   transform: translateZ(0);
 }
 
 ::view-transition-new(root) {
   z-index: 99999 !important;
-  display: block;
+  display: block !important;
+  opacity: 1 !important;
   will-change: clip-path;
   transform: translateZ(0);
 }
