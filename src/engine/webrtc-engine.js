@@ -22,6 +22,7 @@ import APP_CONFIG, { getIceServers, getDefaultSignalingUrl } from '../config/app
 import CryptoService, { deriveKey, encryptChunk, decryptFrame, base64ToBytes, bytesToBase64 } from '../services/crypto-service.js';
 import HashService, { computeHash, sha256, StreamingSHA256 } from '../services/hash-service.js';
 import ReceiverStorage, { createReceiverStorage } from '../storage/receiver-storage.js';
+import TransferManifestManager, { createManifest, getManifest, updateManifest, deleteManifest, listActiveManifests, cleanupExpiredManifests } from '../storage/transfer-manifest.js';
 
 class FluxWebRTCEngine {
   /**
@@ -104,6 +105,11 @@ class FluxWebRTCEngine {
 
     // Sender state
     this.currentFile = null;
+
+    // ICE Restart & Reconnect Recovery Properties
+    this._iceReconnectTimer = null;
+    this._iceRestartAttempts = 0;
+    this._isIceRestarting = false;
   }
 
   /**
@@ -370,6 +376,63 @@ class FluxWebRTCEngine {
     }
   }
 
+  _clearIceReconnectTimer() {
+    if (this._iceReconnectTimer) {
+      clearTimeout(this._iceReconnectTimer);
+      this._iceReconnectTimer = null;
+    }
+  }
+
+  _scheduleIceRecovery() {
+    if (this._iceReconnectTimer || this._isIceRestarting) return;
+
+    const timeoutMs = APP_CONFIG.ICE_RECONNECT_TIMEOUT_MS || 5000;
+    console.log(`[WebRTC Engine] ICE disconnected. Starting ${timeoutMs / 1000}s recovery window...`);
+    
+    this._iceReconnectTimer = setTimeout(() => {
+      this._iceReconnectTimer = null;
+      if (!this.pc) return;
+      const currentState = this.pc.iceConnectionState;
+      if (currentState === 'disconnected' || currentState === 'failed') {
+        console.warn('[WebRTC Engine] Recovery window expired. Initiating ICE restart...');
+        this._attemptIceRestart();
+      }
+    }, timeoutMs);
+  }
+
+  async _attemptIceRestart() {
+    if (!this.pc || this.pc.signalingState === 'closed' || this._isIceRestarting) return;
+
+    const maxAttempts = APP_CONFIG.MAX_ICE_RESTART_ATTEMPTS || 2;
+    if (this._iceRestartAttempts >= maxAttempts) {
+      this._clearIceReconnectTimer();
+      this._handleTransferFailure('WebRTC ICE restart attempts exceeded maximum limit.', 'ERR_ICE_RESTART_EXCEEDED');
+      return;
+    }
+
+    if (this.role !== 'initiator') {
+      console.log('[WebRTC Engine] Peer is joiner. Waiting for initiator to offer ICE restart...');
+      return;
+    }
+
+    this._isIceRestarting = true;
+    this._iceRestartAttempts += 1;
+    this.emit('statusChange', `Attempting WebRTC ICE restart (Attempt ${this._iceRestartAttempts}/${maxAttempts})…`, 'warning');
+
+    try {
+      if (typeof this.pc.restartIce === 'function') {
+        this.pc.restartIce();
+      }
+      const offer = await this.pc.createOffer({ iceRestart: true });
+      await this.pc.setLocalDescription(offer);
+      this._sendSignaling({ type: 'offer', offer: this.pc.localDescription, isIceRestart: true });
+    } catch (err) {
+      console.error('[WebRTC Engine] ICE restart offer creation failed:', err);
+      this._isIceRestarting = false;
+      this._handleTransferFailure(`ICE restart offer failed: ${err.message}`, 'ERR_ICE_RESTART_FAILED');
+    }
+  }
+
   _createPeerConnection() {
     const pcConfig = {
       iceServers: this.iceServers,
@@ -397,15 +460,25 @@ class FluxWebRTCEngine {
       console.log(`[WebRTC Engine] ICE State: ${state}`);
 
       if (state === 'connected' || state === 'completed') {
+        this._clearIceReconnectTimer();
+        this._isIceRestarting = false;
+        this._iceRestartAttempts = 0;
         this._setState('connected');
         this._reportConnectionType();
-      } else if (state === 'failed') {
-        if (this.transferState === 'completed') return;
-        console.warn('[WebRTC Engine] ICE connection failed');
-        this._handleTransferFailure('WebRTC P2P connection failed. Check your network or firewall.', 'ERR_ICE_FAILED');
       } else if (state === 'disconnected') {
-        if (this.transferState !== 'completed') {
-          this.emit('statusChange', 'P2P connection interrupted', 'warning');
+        if (this.transferState !== 'completed' && this.transferState !== 'cancelled' && this.transferState !== 'failed') {
+          this.emit('statusChange', 'P2P connection interrupted. Retrying link…', 'warning');
+          this._scheduleIceRecovery();
+        }
+      } else if (state === 'failed') {
+        if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
+        console.warn('[WebRTC Engine] ICE connection failed');
+        const maxAttempts = APP_CONFIG.MAX_ICE_RESTART_ATTEMPTS || 2;
+        if (this._iceRestartAttempts < maxAttempts && !this._isIceRestarting) {
+          this._attemptIceRestart();
+        } else {
+          this._clearIceReconnectTimer();
+          this._handleTransferFailure('WebRTC P2P connection failed. Check your network or firewall.', 'ERR_ICE_FAILED');
         }
       }
     };
@@ -634,11 +707,10 @@ class FluxWebRTCEngine {
       return;
     }
 
-    // In-Flight Incremental Receiver SHA-256 Update
-    if (this._receiverHasher) {
-      this._receiverHasher.update(new Uint8Array(chunkData));
-    }
+    const lastContiguous = (this.receivedChunksCount > 0) ? (this.receivedChunksCount - 1) : -1;
+    const isDuplicate = chunkIndex <= lastContiguous;
 
+    // Write chunk to storage (idempotent write at offset)
     if (this.storage) {
       const offset = chunkIndex * meta.chunkSize;
       try {
@@ -649,8 +721,24 @@ class FluxWebRTCEngine {
       }
     }
 
-    this.receivedChunksCount += 1;
-    this.receivedBytes += chunkData.byteLength;
+    // Only update hash and counters for non-duplicate sequential chunks
+    if (!isDuplicate) {
+      if (this._receiverHasher) {
+        this._receiverHasher.update(new Uint8Array(chunkData));
+      }
+      this.receivedChunksCount += 1;
+      this.receivedBytes += chunkData.byteLength;
+    }
+
+    // Update IndexedDB manifest checkpoint every 100 chunks or on completion
+    const isAllChunksReceived = this.receivedChunksCount >= meta.totalChunks;
+    if (this.transferId && !isDuplicate && (this.receivedChunksCount % 100 === 0 || isAllChunksReceived)) {
+      updateManifest(this.transferId, {
+        lastContiguousChunk: this.receivedChunksCount - 1,
+        receivedBytes: this.receivedBytes,
+        streamingHashState: this._receiverHasher ? this._receiverHasher.getState() : null
+      }).catch(() => {});
+    }
 
     const totalBytes = meta.size;
     const now = Date.now();
@@ -663,7 +751,6 @@ class FluxWebRTCEngine {
       this.lastProgressBytes = this.receivedBytes;
     }
 
-    const isAllChunksReceived = this.receivedChunksCount >= meta.totalChunks;
     if (isAllChunksReceived || (now - (this._lastRecvUiUpdate || 0)) > 100) {
       this._lastRecvUiUpdate = now;
       const percent = Math.min(100, (this.receivedBytes / totalBytes) * 100);
@@ -692,6 +779,8 @@ class FluxWebRTCEngine {
 
         if (msg.type === 'metadata') {
           this.incomingMeta = msg;
+          this.transferId = msg.transferId || null;
+          this.resumeToken = msg.resumeToken || null;
           this.salt = base64ToBytes(msg.salt);
           this.receivedChunksCount = 0;
           this.receivedBytes = 0;
@@ -726,12 +815,30 @@ class FluxWebRTCEngine {
             return;
           }
 
-          // 3. Mark receiver ready and send metadata-ack to sender
+          // 3. Create IndexedDB manifest checkpoint
+          if (this.transferId) {
+            try {
+              await createManifest({
+                transferId: msg.transferId,
+                fileName: msg.name,
+                fileSize: msg.size,
+                chunkSize: msg.chunkSize,
+                totalChunks: msg.totalChunks,
+                salt: msg.salt,
+                resumeToken: msg.resumeToken,
+                lastContiguousChunk: -1,
+                receivedBytes: 0,
+                streamingHashState: this._receiverHasher ? this._receiverHasher.getState() : null
+              });
+            } catch (_) {}
+          }
+
+          // 4. Mark receiver ready and send metadata-ack to sender
           this._receiverReady = true;
           this._sendControlMessage({ type: 'metadata-ack' });
           this.emit('statusChange', `Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
 
-          // 4. Drain & process any early queued binary chunks safely
+          // 5. Drain & process any early queued binary chunks safely
           if (this._earlyChunkQueue && this._earlyChunkQueue.length > 0) {
             const queueToProcess = [...this._earlyChunkQueue];
             this._earlyChunkQueue = null;
@@ -778,7 +885,84 @@ class FluxWebRTCEngine {
             this.emit('fileComplete', null, meta);
           }
 
+        } else if (msg.type === 'resume-request') {
+          const { transferId, resumeToken } = msg;
+          const manifest = await getManifest(transferId);
+
+          if (!manifest || manifest.resumeToken !== resumeToken || manifest.expiresAt <= Date.now() || manifest.status !== 'active') {
+            this._sendControlMessage({ type: 'resume-response', ok: false, error: 'Resume validation failed: invalid token or expired manifest' });
+            return;
+          }
+
+          this.transferId = manifest.transferId;
+          this.resumeToken = manifest.resumeToken;
+          this.salt = base64ToBytes(manifest.salt);
+          this.incomingMeta = {
+            transferId: manifest.transferId,
+            name: manifest.fileName,
+            size: manifest.fileSize,
+            chunkSize: manifest.chunkSize,
+            totalChunks: manifest.totalChunks,
+            salt: manifest.salt,
+            isResume: true
+          };
+
+          try {
+            this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+          } catch (keyErr) {
+            this._sendControlMessage({ type: 'resume-response', ok: false, error: 'Key derivation failed' });
+            return;
+          }
+
+          this._receiverHasher = new StreamingSHA256();
+          if (manifest.streamingHashState) {
+            try {
+              this._receiverHasher.setState(manifest.streamingHashState);
+            } catch (_) {}
+          }
+
+          try {
+            this.storage = await createReceiverStorage(this.incomingMeta);
+          } catch (storageErr) {
+            this._sendControlMessage({ type: 'resume-response', ok: false, error: storageErr.message });
+            return;
+          }
+
+          const lastChunk = manifest.lastContiguousChunk;
+          this.receivedChunksCount = lastChunk + 1;
+          this.receivedBytes = manifest.receivedBytes;
+          this.transferStartTime = Date.now();
+          this.finishStarted = false;
+          this.senderFinalHash = null;
+          this._receiverReady = true;
+
+          this._setState('transferring');
+          this.emit('statusChange', `Resuming file "${manifest.fileName}" from chunk ${lastChunk + 1}…`, 'info');
+
+          this._sendControlMessage({
+            type: 'resume-response',
+            ok: true,
+            transferId: manifest.transferId,
+            lastContiguousChunk: lastChunk
+          });
+
+        } else if (msg.type === 'resume-response') {
+          if (!msg.ok) {
+            this._handleTransferFailure(`Resume rejected by receiver: ${msg.error || 'Validation failed'}`, 'ERR_RESUME_REJECTED');
+            if (typeof this._onResumeResolver === 'function') {
+              this._onResumeResolver(false);
+            }
+          } else {
+            this._lastResumeChunk = msg.lastContiguousChunk;
+            if (typeof this._onResumeResolver === 'function') {
+              this._onResumeResolver(true);
+            }
+          }
+
         } else if (msg.type === 'cancel') {
+          if (this.transferId) {
+            deleteManifest(this.transferId).catch(() => {});
+          }
           if (this.storage) {
             await this.storage.abort();
             this.storage = null;
@@ -846,6 +1030,10 @@ class FluxWebRTCEngine {
         throw new Error(`SHA-256 checksum mismatch (Expected ${expectedHash ? expectedHash.slice(0, 8) : 'none'}…, got ${computedHash.slice(0, 8)}…)`);
       }
 
+      if (this.transferId) {
+        deleteManifest(this.transferId).catch(() => {});
+      }
+
       // Verification successful
       this._setState('completed');
       this.emit('statusChange', `File "${meta.name}" received & verified successfully! 🎉`, 'success');
@@ -855,6 +1043,9 @@ class FluxWebRTCEngine {
 
     } catch (err) {
       this._receiverHasher = null;
+      if (this.transferId) {
+        deleteManifest(this.transferId).catch(() => {});
+      }
       if (this.storage) {
         await this.storage.abort();
         this.storage = null;
@@ -866,7 +1057,7 @@ class FluxWebRTCEngine {
   /**
    * Send File over DataChannel with AES-256-GCM E2EE & In-Flight Incremental SHA-256 Hashing
    */
-  async sendFile(file) {
+  async sendFile(file, resumeOptions = null) {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       this.emit('error', 'P2P DataChannel is not open. Connect to peer first.', 'ERR_NOT_CONNECTED');
       return;
@@ -887,11 +1078,18 @@ class FluxWebRTCEngine {
     const chunkSize = APP_CONFIG.DEFAULT_CHUNK_SIZE;
     const totalChunks = Math.ceil(file.size / chunkSize);
 
-    // Initialize Sender In-Flight Incremental SHA-256 Hasher
-    this._senderHasher = new StreamingSHA256();
-
     const cryptoObj = CryptoService.getCrypto();
-    this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
+
+    if (resumeOptions && resumeOptions.transferId) {
+      this.transferId = resumeOptions.transferId;
+      this.resumeToken = resumeOptions.resumeToken;
+      this.salt = base64ToBytes(resumeOptions.salt);
+    } else {
+      this.transferId = Array.from(cryptoObj.getRandomValues(new Uint8Array(16)))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+      this.resumeToken = bytesToBase64(cryptoObj.getRandomValues(new Uint8Array(32)));
+      this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
+    }
 
     try {
       this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
@@ -901,38 +1099,84 @@ class FluxWebRTCEngine {
       return;
     }
 
-    const metadata = {
-      type: 'metadata',
-      v: 2,
-      cipher: 'AES-256-GCM',
-      name: file.name,
-      size: file.size,
-      mimeType: file.type || 'application/octet-stream',
-      chunkSize: chunkSize,
-      totalChunks: totalChunks,
-      salt: bytesToBase64(this.salt)
-    };
-
-    // 1. Send Metadata Control Header (No pre-calculated hash required)
-    this.emit('statusChange', `Waiting for receiver readiness ACK…`, 'info');
-    this._sendControlMessage(metadata);
-
-    // 2. Wait for metadata-ack from receiver (with 15s timeout)
-    try {
-      await this._waitForMetadataAck(APP_CONFIG.METADATA_ACK_TIMEOUT_MS);
-    } catch (ackErr) {
-      this._senderHasher = null;
-      this._handleTransferFailure(`Transfer initiation failed: ${ackErr.message}`, 'ERR_METADATA_ACK_TIMEOUT');
-      return;
-    }
-
-    // 3. Metadata acknowledged -> Start binary streaming & in-flight hashing
-    this.emit('statusChange', `Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
-
     let offset = 0;
     let chunkIndex = 0;
+
+    if (resumeOptions && resumeOptions.transferId) {
+      this.emit('statusChange', 'Sending resume request to receiver…', 'info');
+      this._sendControlMessage({
+        type: 'resume-request',
+        transferId: this.transferId,
+        resumeToken: this.resumeToken
+      });
+
+      const resumeOk = await new Promise((resolve) => {
+        let timer = setTimeout(() => {
+          this._onResumeResolver = null;
+          resolve(false);
+        }, APP_CONFIG.METADATA_ACK_TIMEOUT_MS);
+
+        this._onResumeResolver = (accepted) => {
+          clearTimeout(timer);
+          this._onResumeResolver = null;
+          resolve(accepted);
+        };
+      });
+
+      if (!resumeOk) {
+        this._handleTransferFailure('Resume request rejected or timed out.', 'ERR_RESUME_REJECTED');
+        return;
+      }
+
+      const lastChunk = this._lastResumeChunk ?? -1;
+      const resumeChunk = lastChunk + 1;
+      offset = resumeChunk * chunkSize;
+      chunkIndex = resumeChunk;
+
+      this.emit('statusChange', `Rebuilding SHA-256 hash state for resume from chunk ${resumeChunk}…`, 'info');
+      this._senderHasher = new StreamingSHA256();
+      if (offset > 0) {
+        const prefixSlice = file.slice(0, offset);
+        const prefixBuffer = await prefixSlice.arrayBuffer();
+        this._senderHasher.update(prefixBuffer);
+      }
+
+      this.emit('statusChange', `Resuming encrypted transfer of "${file.name}" from chunk ${resumeChunk} (${this._formatBytes(offset)} / ${this._formatBytes(file.size)})…`, 'info');
+
+    } else {
+      // Normal Transfer Setup
+      this._senderHasher = new StreamingSHA256();
+
+      const metadata = {
+        type: 'metadata',
+        v: 2,
+        cipher: 'AES-256-GCM',
+        transferId: this.transferId,
+        resumeToken: this.resumeToken,
+        name: file.name,
+        size: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        chunkSize: chunkSize,
+        totalChunks: totalChunks,
+        salt: bytesToBase64(this.salt)
+      };
+
+      this.emit('statusChange', `Waiting for receiver readiness ACK…`, 'info');
+      this._sendControlMessage(metadata);
+
+      try {
+        await this._waitForMetadataAck(APP_CONFIG.METADATA_ACK_TIMEOUT_MS);
+      } catch (ackErr) {
+        this._senderHasher = null;
+        this._handleTransferFailure(`Transfer initiation failed: ${ackErr.message}`, 'ERR_METADATA_ACK_TIMEOUT');
+        return;
+      }
+
+      this.emit('statusChange', `Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
+    }
+
     this.lastProgressTime = Date.now();
-    this.lastProgressBytes = 0;
+    this.lastProgressBytes = offset;
     this.currentSpeedBps = 0;
     this._lastSendUiUpdate = 0;
 
@@ -1061,6 +1305,9 @@ class FluxWebRTCEngine {
 
   cancelTransfer() {
     if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
+    this._clearIceReconnectTimer();
+    this._iceRestartAttempts = 0;
+    this._isIceRestarting = false;
     this._senderHasher = null;
     this._receiverHasher = null;
 
@@ -1091,6 +1338,9 @@ class FluxWebRTCEngine {
 
   _handleTransferFailure(errorMessage, errorCode) {
     if (this.transferState === 'completed' || this.transferState === 'failed' || this.transferState === 'cancelled') return;
+    this._clearIceReconnectTimer();
+    this._iceRestartAttempts = 0;
+    this._isIceRestarting = false;
     this._senderHasher = null;
     this._receiverHasher = null;
 
@@ -1128,6 +1378,10 @@ class FluxWebRTCEngine {
   disconnect() {
     if (this._isDisconnecting) return;
     this._isDisconnecting = true;
+
+    this._clearIceReconnectTimer();
+    this._iceRestartAttempts = 0;
+    this._isIceRestarting = false;
 
     this._senderHasher = null;
     this._receiverHasher = null;
@@ -1168,6 +1422,12 @@ class FluxWebRTCEngine {
     this.aesKey = null;
     this.salt = null;
     this._receiverReady = false;
+
+    // Resumable transfer attributes
+    this.transferId = null;
+    this.resumeToken = null;
+    this._lastResumeChunk = null;
+    this._onResumeResolver = null;
     this._earlyChunkQueue = null;
 
     this._isDisconnecting = false;

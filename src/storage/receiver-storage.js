@@ -19,6 +19,7 @@ class BaseReceiverStorage {
   async initialize(meta) { throw new Error('Not implemented'); }
   async writeChunk(chunkIndex, offset, chunkData) { throw new Error('Not implemented'); }
   async finalize() { throw new Error('Not implemented'); }
+  async preserve() { }
   async abort() { throw new Error('Not implemented'); }
   async cleanup() { }
 }
@@ -50,7 +51,8 @@ class OPFSStorage extends BaseReceiverStorage {
             resolve(false);
           }
         };
-        worker.postMessage({ type: 'init', fileName: meta.name, totalSize: meta.size });
+        const fileName = meta.transferId ? `flux_partial_${meta.transferId}.bin` : (meta.name || meta.fileName);
+        worker.postMessage({ type: 'init', fileName, transferId: meta.transferId, isResume: Boolean(meta.isResume), totalSize: meta.size });
       });
 
       if (isInitialized) {
@@ -87,6 +89,13 @@ class OPFSStorage extends BaseReceiverStorage {
     });
     this.cleanup();
     return fileObj;
+  }
+
+  async preserve() {
+    if (this.worker) {
+      try { this.worker.postMessage({ type: 'preserve' }); } catch (_) { }
+    }
+    this.cleanup();
   }
 
   async abort() {
@@ -138,6 +147,11 @@ class MemoryStorage extends BaseReceiverStorage {
     const blob = new Blob(this.chunks, { type: this.meta?.mimeType || 'application/octet-stream' });
     this.cleanup();
     return blob;
+  }
+
+  async preserve() {
+    // MemoryStorage cannot survive tab close or process termination
+    this.cleanup();
   }
 
   async abort() {

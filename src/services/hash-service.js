@@ -125,6 +125,58 @@ class StreamingSHA256 {
 
     return Array.from(out).map(b => b.toString(16).padStart(2, '0')).join('');
   }
+
+  getState() {
+    return {
+      H: [this.H0, this.H1, this.H2, this.H3, this.H4, this.H5, this.H6, this.H7],
+      buffer: Array.from(this.buffer.subarray(0, this.bufferLen)),
+      bufferLen: this.bufferLen,
+      totalBytes: this.totalBytes
+    };
+  }
+
+  setState(state) {
+    if (!state || typeof state !== 'object') {
+      throw new Error('Invalid StreamingSHA256 state: state must be an object');
+    }
+
+    const { H, buffer, bufferLen, totalBytes } = state;
+
+    if (!Array.isArray(H) || H.length !== 8) {
+      throw new Error('Invalid StreamingSHA256 state: H must be an 8-word uint32 array');
+    }
+
+    for (let i = 0; i < 8; i++) {
+      if (typeof H[i] !== 'number' || isNaN(H[i]) || !Number.isInteger(H[i])) {
+        throw new Error(`Invalid StreamingSHA256 state: word H[${i}] is invalid`);
+      }
+    }
+
+    if (typeof bufferLen !== 'number' || bufferLen < 0 || bufferLen > 64) {
+      throw new Error('Invalid StreamingSHA256 state: bufferLen must be 0..64');
+    }
+
+    if (typeof totalBytes !== 'number' || totalBytes < 0 || !Number.isFinite(totalBytes)) {
+      throw new Error('Invalid StreamingSHA256 state: totalBytes must be a valid non-negative number');
+    }
+
+    if (!Array.isArray(buffer) && !(buffer instanceof Uint8Array)) {
+      throw new Error('Invalid StreamingSHA256 state: buffer must be an array or Uint8Array');
+    }
+
+    if (buffer.length < bufferLen) {
+      throw new Error('Invalid StreamingSHA256 state: buffer content shorter than bufferLen');
+    }
+
+    this.H0 = H[0] | 0; this.H1 = H[1] | 0; this.H2 = H[2] | 0; this.H3 = H[3] | 0;
+    this.H4 = H[4] | 0; this.H5 = H[5] | 0; this.H6 = H[6] | 0; this.H7 = H[7] | 0;
+    this.buffer = new Uint8Array(64);
+    for (let i = 0; i < bufferLen; i++) {
+      this.buffer[i] = buffer[i] & 0xFF;
+    }
+    this.bufferLen = bufferLen;
+    this.totalBytes = totalBytes;
+  }
 }
 
 async function computeHash(payload) {

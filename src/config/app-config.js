@@ -10,6 +10,8 @@ const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024; // 300 MB safe limit for non
 const METADATA_ACK_TIMEOUT_MS = 15000; // 15 seconds timeout waiting for receiver metadata-ack
 const MAX_EARLY_CHUNK_QUEUE_SIZE = 100; // Maximum early binary chunks queued while receiver initializes
 const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling room cleanup
+const ICE_RECONNECT_TIMEOUT_MS = 5000; // 5 seconds recovery window for ICE disconnects before attempting restart
+const MAX_ICE_RESTART_ATTEMPTS = 2; // Maximum ICE restart negotiation attempts per transfer
 
 const ALPHANUMERIC_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
 
@@ -48,7 +50,6 @@ function generateSessionCode(length = 8) {
     if (cryptoObj) {
       cryptoObj.getRandomValues(randomBytes);
     } else {
-      // Fallback only if WebCrypto is unavailable in test environment
       for (let i = 0; i < randomBytes.length; i++) {
         randomBytes[i] = Math.floor(Math.random() * 256);
       }
@@ -161,6 +162,8 @@ const APP_CONFIG = {
   METADATA_ACK_TIMEOUT_MS,
   MAX_EARLY_CHUNK_QUEUE_SIZE,
   ROOM_INACTIVITY_TIMEOUT_MS,
+  ICE_RECONNECT_TIMEOUT_MS,
+  MAX_ICE_RESTART_ATTEMPTS,
   ALPHANUMERIC_ALPHABET,
   generateSessionCode,
   isValidSessionCode,
@@ -183,6 +186,8 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node 
   module.exports.METADATA_ACK_TIMEOUT_MS = METADATA_ACK_TIMEOUT_MS;
   module.exports.MAX_EARLY_CHUNK_QUEUE_SIZE = MAX_EARLY_CHUNK_QUEUE_SIZE;
   module.exports.ROOM_INACTIVITY_TIMEOUT_MS = ROOM_INACTIVITY_TIMEOUT_MS;
+  module.exports.ICE_RECONNECT_TIMEOUT_MS = ICE_RECONNECT_TIMEOUT_MS;
+  module.exports.MAX_ICE_RESTART_ATTEMPTS = MAX_ICE_RESTART_ATTEMPTS;
   module.exports.ALPHANUMERIC_ALPHABET = ALPHANUMERIC_ALPHABET;
   module.exports.generateSessionCode = generateSessionCode;
   module.exports.isValidSessionCode = isValidSessionCode;
@@ -202,6 +207,8 @@ export {
   METADATA_ACK_TIMEOUT_MS,
   MAX_EARLY_CHUNK_QUEUE_SIZE,
   ROOM_INACTIVITY_TIMEOUT_MS,
+  ICE_RECONNECT_TIMEOUT_MS,
+  MAX_ICE_RESTART_ATTEMPTS,
   ALPHANUMERIC_ALPHABET,
   generateSessionCode,
   isValidSessionCode,
