@@ -20,6 +20,16 @@ export function useFluxTransfer() {
   const engineRef = useRef(null);
   const selectedFileRef = useRef(null);
   const wakeLockRef = useRef(null);
+  const receivedFileUrlRef = useRef(null);
+
+  const revokeActiveFileUrl = useCallback(() => {
+    if (receivedFileUrlRef.current) {
+      try {
+        URL.revokeObjectURL(receivedFileUrlRef.current);
+      } catch (_) {}
+      receivedFileUrlRef.current = null;
+    }
+  }, []);
 
   // Best-effort Screen Wake Lock helpers for mobile transfers
   const requestWakeLock = useCallback(async () => {
@@ -111,7 +121,9 @@ export function useFluxTransfer() {
     engine.on('fileComplete', ({ blob, fileName }) => {
       if (blob) {
         setReceivedFileBlob(blob);
+        revokeActiveFileUrl();
         const url = URL.createObjectURL(blob);
+        receivedFileUrlRef.current = url;
         setReceivedFileUrl(url);
         const finalName = fileName || 'received-file';
         setReceivedFileName(finalName);
@@ -141,11 +153,12 @@ export function useFluxTransfer() {
 
     return () => {
       releaseWakeLock();
+      revokeActiveFileUrl();
       try {
         engine.disconnect();
       } catch (e) {}
     };
-  }, [releaseWakeLock]);
+  }, [releaseWakeLock, revokeActiveFileUrl]);
 
   const createSendSession = useCallback(async (file) => {
     if (!file || !engineRef.current) return;
@@ -190,6 +203,7 @@ export function useFluxTransfer() {
     setTransferredBytes(0);
     setTotalBytes(0);
     setReceivedFileBlob(null);
+    revokeActiveFileUrl();
     setReceivedFileUrl(null);
     setReceivedFileName('');
     setErrorMessage('');
@@ -197,7 +211,7 @@ export function useFluxTransfer() {
     if (engineRef.current) {
       engineRef.current.disconnect();
     }
-  }, [releaseWakeLock]);
+  }, [releaseWakeLock, revokeActiveFileUrl]);
 
   return {
     engineState,

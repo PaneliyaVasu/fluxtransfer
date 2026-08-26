@@ -468,6 +468,76 @@ async function runSecurityTestSuite() {
     assert(secondShutdown === false, 'Second shutdown call is ignored idempotently without errors');
   }
 
+  // Test 18: Static Path Traversal Containment Verification
+  console.log('\n📋 Test 18: Static Path Traversal Containment Verification');
+  const staticServerProc = spawn('node', ['src/server/signaling-server.js'], { stdio: 'pipe' });
+  await new Promise((r) => setTimeout(r, 1200));
+
+  try {
+    const traversalResponse = await new Promise((resolve) => {
+      const req = http.request({ host: 'localhost', port: 8080, path: '/../package.json', method: 'GET' }, (res) => {
+        res.resume();
+        resolve(res);
+      });
+      req.end();
+    });
+    assert(traversalResponse.statusCode === 403, 'Path traversal request "/../package.json" rejected with 403 Forbidden');
+
+    const deepTraversalResponse = await new Promise((resolve) => {
+      const req = http.request({ host: 'localhost', port: 8080, path: '/../../src/server/signaling-server.js', method: 'GET' }, (res) => {
+        res.resume();
+        resolve(res);
+      });
+      req.end();
+    });
+    assert(deepTraversalResponse.statusCode === 403, 'Deep traversal request "/../../src/server/signaling-server.js" rejected with 403 Forbidden');
+
+    const legitResponse = await new Promise((resolve) => {
+      http.get('http://localhost:8080/index.html', (res) => {
+        res.resume();
+        resolve(res);
+      });
+    });
+    assert(legitResponse.statusCode === 200, 'Legitimate static file request "/index.html" returns 200 OK');
+  } finally {
+    staticServerProc.kill();
+  }
+
+  // Test 19: Cryptographically Secure Peer Token Generation
+  console.log('\n📋 Test 19: Cryptographically Secure Peer Token Generation');
+  const serverModule = require('./signaling-server.js');
+  if (serverModule && typeof serverModule.generateSecurePeerToken === 'function') {
+    const t1 = serverModule.generateSecurePeerToken();
+    const t2 = serverModule.generateSecurePeerToken();
+    assert(typeof t1 === 'string' && t1.startsWith('token_'), 'Secure peer token format starts with "token_"');
+    assert(t1 !== t2, 'Two generated peer tokens are unique and non-identical');
+    assert(t1.length >= 38, 'Peer token contains 128 bits (32 hex chars) of cryptographic entropy');
+  }
+
+  // Test 20: OPFS / Storage Integrity Failure Purge Verification
+  console.log('\n📋 Test 20: OPFS / Storage Integrity Failure Purge Verification');
+  const integrityEngine = new FluxWebRTCEngine();
+  integrityEngine.sessionCode = 'test-code';
+  integrityEngine.incomingMeta = { name: 'test.txt', size: 100, chunkSize: 128 * 1024, totalChunks: 1 };
+  integrityEngine.senderFinalHash = '0000000000000000000000000000000000000000000000000000000000000000'; // Wrong hash intentionally
+
+  let purgeCalled = false;
+  integrityEngine.storage = {
+    finalize: async () => new Blob(['dummy data']),
+    purge: async () => { purgeCalled = true; },
+    abort: async () => { purgeCalled = true; }
+  };
+
+  let failureReason = null;
+  integrityEngine.on('error', (msg, code) => {
+    if (code === 'ERR_INTEGRITY_FAILED') failureReason = msg;
+  });
+
+  await integrityEngine._finalizeReceiverTransfer();
+  assert(purgeCalled === true, 'Storage purge() is called when SHA-256 integrity check fails');
+  assert(integrityEngine.storage === null, 'Storage reference is set to null after integrity failure cleanup');
+  assert(failureReason !== null, 'ERR_INTEGRITY_FAILED error event emitted on integrity mismatch');
+
   // Clean up manifest
   await deleteManifest('test_transfer_123');
 

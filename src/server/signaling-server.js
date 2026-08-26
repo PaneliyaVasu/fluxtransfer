@@ -13,10 +13,18 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 
+const { webcrypto } = require('crypto');
+
 const PORT = process.env.PORT || 8080;
 const distDir = path.join(__dirname, '..', '..', 'dist');
 const STATIC_DIR = distDir;
 const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling cleanup
+
+function generateSecurePeerToken() {
+  const bytes = new Uint8Array(16);
+  webcrypto.getRandomValues(bytes);
+  return `token_${Buffer.from(bytes).toString('hex')}`;
+}
 
 let isShuttingDown = false;
 let forceShutdownTimer = null;
@@ -88,6 +96,16 @@ function serveStatic(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   let reqPath = req.url.split('?')[0].split('#')[0];
+  try {
+    reqPath = decodeURIComponent(reqPath);
+  } catch (_) {}
+
+  // Explicit path traversal guard for unnormalized or encoded dots
+  if (req.url.includes('..') || reqPath.includes('..')) {
+    res.writeHead(403, getSecurityHeaders('text/plain'));
+    res.end('Forbidden');
+    return;
+  }
 
   if (reqPath.endsWith('/') && reqPath !== '/') {
     reqPath += 'index.html';
@@ -96,13 +114,17 @@ function serveStatic(req, res) {
     reqPath = '/index.html';
   }
 
-  const filePath = path.join(STATIC_DIR, reqPath);
+  const resolvedStaticDir = path.resolve(STATIC_DIR);
+  const resolvedFilePath = path.resolve(STATIC_DIR, '.' + path.sep + reqPath.replace(/^\/+/, ''));
+  const relativePath = path.relative(resolvedStaticDir, resolvedFilePath);
 
-  if (!filePath.startsWith(STATIC_DIR)) {
+  if (relativePath.startsWith('..' + path.sep) || relativePath === '..' || path.isAbsolute(relativePath)) {
     res.writeHead(403, getSecurityHeaders('text/plain'));
     res.end('Forbidden');
     return;
   }
+
+  const filePath = resolvedFilePath;
 
   fs.stat(filePath, (err, stat) => {
     if (err) {
@@ -329,7 +351,7 @@ wss.on('connection', (ws, req) => {
           const cleanRoom = room.trim();
           const token = (typeof msgPeerToken === 'string' && msgPeerToken.trim())
             ? msgPeerToken.trim()
-            : (ws.peerToken || `token_${Math.random()}`);
+            : (ws.peerToken || generateSecurePeerToken());
           ws.peerToken = token;
 
           if (ws.roomCode && ws.roomCode !== cleanRoom) {
@@ -537,6 +559,7 @@ if (typeof module !== 'undefined' && module.exports) {
     getSecurityHeaders,
     isOriginAllowed,
     getAllowedOrigins,
-    shutdownServer
+    shutdownServer,
+    generateSecurePeerToken
   };
 }

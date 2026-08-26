@@ -21,6 +21,7 @@ class BaseReceiverStorage {
   async finalize() { throw new Error('Not implemented'); }
   async preserve() { }
   async abort() { throw new Error('Not implemented'); }
+  async purge() { await this.abort(); }
   async cleanup() { }
 }
 
@@ -29,6 +30,7 @@ class OPFSStorage extends BaseReceiverStorage {
     super();
     this.isOPFS = true;
     this.worker = null;
+    this.fileName = null;
   }
 
   async initialize(meta) {
@@ -39,6 +41,8 @@ class OPFSStorage extends BaseReceiverStorage {
     try {
       const workerPath = getWorkerPath('/opfs-writer-worker.js');
       const worker = new Worker(workerPath);
+      const fileName = meta.transferId ? `flux_partial_${meta.transferId}.bin` : (meta.name || meta.fileName);
+      this.fileName = fileName;
 
       const isInitialized = await new Promise((resolve) => {
         const timer = setTimeout(() => resolve(false), 2500);
@@ -51,7 +55,6 @@ class OPFSStorage extends BaseReceiverStorage {
             resolve(false);
           }
         };
-        const fileName = meta.transferId ? `flux_partial_${meta.transferId}.bin` : (meta.name || meta.fileName);
         worker.postMessage({ type: 'init', fileName, transferId: meta.transferId, isResume: Boolean(meta.isResume), totalSize: meta.size });
       });
 
@@ -99,8 +102,18 @@ class OPFSStorage extends BaseReceiverStorage {
   }
 
   async abort() {
+    await this.purge();
+  }
+
+  async purge() {
     if (this.worker) {
       try { this.worker.postMessage({ type: 'abort' }); } catch (_) { }
+    }
+    if (this.fileName && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+      try {
+        const root = await navigator.storage.getDirectory();
+        await root.removeEntry(this.fileName);
+      } catch (_) { }
     }
     this.cleanup();
   }

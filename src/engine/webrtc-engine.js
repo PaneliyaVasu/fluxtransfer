@@ -1009,12 +1009,12 @@ class FluxWebRTCEngine {
   async _finalizeReceiverTransfer() {
     const meta = this.incomingMeta;
     this.incomingMeta = null;
+    const activeStorage = this.storage;
 
     try {
       let fileObj = null;
-      if (this.storage) {
-        fileObj = await this.storage.finalize();
-        this.storage = null;
+      if (activeStorage) {
+        fileObj = await activeStorage.finalize();
       }
 
       if (!fileObj) throw new Error('Failed to retrieve file from storage');
@@ -1040,6 +1040,7 @@ class FluxWebRTCEngine {
       }
 
       // Verification successful
+      this.storage = null;
       this._setState('completed');
       this.emit('statusChange', `File "${meta.name}" received & verified successfully! 🎉`, 'success');
       this.emit('fileComplete', fileObj, meta);
@@ -1051,10 +1052,17 @@ class FluxWebRTCEngine {
       if (this.transferId) {
         deleteManifest(this.transferId).catch(() => {});
       }
-      if (this.storage) {
-        await this.storage.abort();
+      if (activeStorage) {
+        if (typeof activeStorage.purge === 'function') {
+          await activeStorage.purge();
+        } else {
+          await activeStorage.abort();
+        }
+      }
+      if (this.storage === activeStorage) {
         this.storage = null;
       }
+      this.storage = null;
       this._handleTransferFailure(`Transfer verification failed: ${err.message}`, 'ERR_INTEGRITY_FAILED');
     }
   }
