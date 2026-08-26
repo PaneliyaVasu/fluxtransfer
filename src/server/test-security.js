@@ -17,8 +17,10 @@
  * 13. WebRTC ICE restart recovery, disconnect timer, role collision prevention, and clean teardown.
  * 14. StreamingSHA256 getState()/setState() hash state serialization.
  * 15. True Resumable Transfer Protocol, 256-bit resumeToken security, and invalid token rejection.
+ * 16. Static HTTP response security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy).
  */
 
+const http = require('http');
 const { webcrypto } = require('crypto');
 const { WebSocket } = require('ws');
 const EngineModule = require('../engine/webrtc-engine.js');
@@ -78,7 +80,7 @@ async function runSecurityTestSuite() {
 
   assert(iv0Hex !== iv1Hex, 'Each chunk uses a unique 12-byte AES-GCM IV');
 
-  // Test 3 & 4: Signaling Message Privacy
+  // Test 3 & 4: Signaling Eavesdropping Defense
   console.log('\n📋 Test 3 & 4: Signaling Eavesdropping Defense');
   const metadata = {
     type: 'metadata',
@@ -178,8 +180,8 @@ async function runSecurityTestSuite() {
   assert(isValidSessionCode('abc_1234') === false, 'Rejects code containing underscore "abc_1234"');
   assert(isValidSessionCode('') === false, 'Rejects empty string ""');
 
-  // Test 11: WebSocket Origin Header Validation
-  console.log('\n📋 Test 11: WebSocket Origin Validation');
+  // Test 11: WebSocket Origin Header Validation & HTTP Security Headers
+  console.log('\n📋 Test 11: WebSocket Origin Validation & HTTP Security Headers');
   const { spawn } = require('child_process');
   const serverProc = spawn('node', ['src/server/signaling-server.js'], { stdio: 'pipe' });
   await new Promise((r) => setTimeout(r, 1200));
@@ -214,6 +216,19 @@ async function runSecurityTestSuite() {
     });
     assert(lookalikeError !== null, 'WebSocket connection rejected for lookalike Origin "http://localhost:5173.evil.com"');
     if (wsLookalike.readyState === WebSocket.OPEN) wsLookalike.close();
+
+    // Test 16: Static HTTP Response Security Headers
+    console.log('\n📋 Test 16: Static HTTP Response Security Headers');
+    const httpResponse = await new Promise((resolve) => {
+      http.get('http://localhost:8080/health', (res) => {
+        res.resume();
+        resolve(res);
+      });
+    });
+
+    assert(httpResponse.headers['x-content-type-options'] === 'nosniff', 'X-Content-Type-Options: nosniff header present on static HTTP response');
+    assert(httpResponse.headers['x-frame-options'] === 'DENY', 'X-Frame-Options: DENY header present on static HTTP response');
+    assert(httpResponse.headers['referrer-policy'] === 'strict-origin-when-cross-origin', 'Referrer-Policy: strict-origin-when-cross-origin header present on static HTTP response');
 
   } finally {
     serverProc.kill();

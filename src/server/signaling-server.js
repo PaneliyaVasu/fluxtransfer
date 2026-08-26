@@ -40,6 +40,19 @@ function isOriginAllowed(originHeader) {
   return allowed.some(allowedOrigin => allowedOrigin.replace(/\/$/, '') === cleanOrigin);
 }
 
+// ─── Client IP Extraction (Direct vs Trusted Proxy) ─────────────────────────
+function getClientIp(req) {
+  const trustProxy = process.env.TRUST_PROXY === 'true';
+  if (trustProxy && req && req.headers && req.headers['x-forwarded-for']) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+      const clientIp = forwarded.split(',')[0].trim();
+      if (clientIp) return clientIp;
+    }
+  }
+  return (req && req.socket && req.socket.remoteAddress) || '127.0.0.1';
+}
+
 // ─── MIME Types ───────────────────────────────────────────────────────────────
 const MIME = {
   '.html': 'text/html',
@@ -57,6 +70,17 @@ const MIME = {
   '.xml': 'text/xml'
 };
 
+function getSecurityHeaders(contentType, extra = {}) {
+  return {
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    ...extra
+  };
+}
+
 function serveStatic(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
 
@@ -72,15 +96,21 @@ function serveStatic(req, res) {
   const filePath = path.join(STATIC_DIR, reqPath);
 
   if (!filePath.startsWith(STATIC_DIR)) {
-    res.writeHead(403); res.end('Forbidden'); return;
+    res.writeHead(403, getSecurityHeaders('text/plain'));
+    res.end('Forbidden');
+    return;
   }
 
   fs.stat(filePath, (err, stat) => {
     if (err) {
       const fallback = path.join(STATIC_DIR, 'index.html');
       fs.readFile(fallback, (e, data) => {
-        if (e) { res.writeHead(404); res.end('Not found'); return; }
-        res.writeHead(200, { 'Content-Type': 'text/html' });
+        if (e) {
+          res.writeHead(404, getSecurityHeaders('text/plain'));
+          res.end('Not found');
+          return;
+        }
+        res.writeHead(200, getSecurityHeaders('text/html', { 'Content-Length': data.length }));
         res.end(data);
       });
       return;
@@ -92,13 +122,17 @@ function serveStatic(req, res) {
         if (e) {
           const fallback = path.join(STATIC_DIR, 'index.html');
           fs.readFile(fallback, (errFallback, fallbackData) => {
-            if (errFallback) { res.writeHead(404); res.end('Not found'); return; }
-            res.writeHead(200, { 'Content-Type': 'text/html' });
+            if (errFallback) {
+              res.writeHead(404, getSecurityHeaders('text/plain'));
+              res.end('Not found');
+              return;
+            }
+            res.writeHead(200, getSecurityHeaders('text/html', { 'Content-Length': fallbackData.length }));
             res.end(fallbackData);
           });
           return;
         }
-        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.writeHead(200, getSecurityHeaders('text/html', { 'Content-Length': data.length }));
         res.end(data);
       });
       return;
@@ -106,13 +140,7 @@ function serveStatic(req, res) {
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME[ext] || 'application/octet-stream';
-
-    const headers = {
-      'Content-Type': contentType,
-      'Content-Length': stat.size,
-      'Cache-Control': 'no-store, no-cache, must-revalidate',
-      'X-Content-Type-Options': 'nosniff',
-    };
+    const headers = getSecurityHeaders(contentType, { 'Content-Length': stat.size });
 
     res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
@@ -122,13 +150,17 @@ function serveStatic(req, res) {
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   if (req.url === '/health' || req.url === '/api/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({
+    const healthData = JSON.stringify({
       status: 'ok',
       service: 'FluxTransfer Signaling Server',
       activeRooms: rooms.size,
       connectedClients: wss.clients.size
+    });
+    res.writeHead(200, getSecurityHeaders('application/json', {
+      'Access-Control-Allow-Origin': '*',
+      'Content-Length': Buffer.byteLength(healthData)
     }));
+    res.end(healthData);
     return;
   }
 
@@ -155,6 +187,17 @@ function checkIpRateLimit(ip) {
   }
   ipRateLimits.set(ip, entry);
   return entry.count <= IP_JOIN_LIMIT_PER_MIN;
+}
+
+function cleanupExpiredIpRateLimits(now = Date.now()) {
+  let cleanedCount = 0;
+  for (const [ip, entry] of ipRateLimits.entries()) {
+    if (now > entry.resetTime) {
+      ipRateLimits.delete(ip);
+      cleanedCount++;
+    }
+  }
+  return cleanedCount;
 }
 
 function touchRoomActivity(roomCode) {
@@ -226,7 +269,7 @@ wss.on('connection', (ws, req) => {
   ws.peerToken = null;
   ws.msgCount = 0;
   ws.msgResetTime = Date.now() + 60000;
-  const clientIp = (req.socket && req.socket.remoteAddress) || '127.0.0.1';
+  const clientIp = getClientIp(req);
 
   ws.on('pong', () => { ws.isAlive = true; });
 
@@ -399,11 +442,35 @@ const pingInterval = setInterval(() => {
   });
 }, 30000);
 
-wss.on('close', () => clearInterval(pingInterval));
+const ipRateLimitCleanupTimer = setInterval(() => {
+  cleanupExpiredIpRateLimits();
+}, 10 * 60 * 1000);
+
+wss.on('close', () => {
+  clearInterval(pingInterval);
+  clearInterval(ipRateLimitCleanupTimer);
+});
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 FluxTransfer running on http://0.0.0.0:${PORT}`);
-  console.log(`📡 WebSocket signaling ready on port ${PORT}`);
-  console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
-});
+if (require.main === module) {
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🚀 FluxTransfer running on http://0.0.0.0:${PORT}`);
+    console.log(`📡 WebSocket signaling ready on port ${PORT}`);
+    console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
+  });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    server,
+    wss,
+    rooms,
+    ipRateLimits,
+    checkIpRateLimit,
+    cleanupExpiredIpRateLimits,
+    getClientIp,
+    getSecurityHeaders,
+    isOriginAllowed,
+    getAllowedOrigins
+  };
+}

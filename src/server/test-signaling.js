@@ -3,9 +3,52 @@
  */
 const { WebSocket } = require('ws');
 const { spawn } = require('child_process');
+const signalingModule = require('./signaling-server.js');
+const { ipRateLimits, cleanupExpiredIpRateLimits, getClientIp } = signalingModule;
 
 async function runTests() {
   console.log('🧪 Starting Signaling Server Automated Tests...');
+
+  // ─── Unit Test 1: ipRateLimits Memory Cleanup ─────────────────────────────
+  console.log('📋 Unit Test 1: ipRateLimits Memory Cleanup');
+  const now = Date.now();
+  ipRateLimits.set('10.0.0.1', { count: 5, resetTime: now - 5000 }); // expired
+  ipRateLimits.set('10.0.0.2', { count: 2, resetTime: now + 60000 }); // active
+  ipRateLimits.set('10.0.0.3', { count: 12, resetTime: now - 1000 }); // expired
+
+  const cleaned = cleanupExpiredIpRateLimits(now);
+  if (cleaned !== 2) throw new Error(`Expected 2 expired entries cleaned, got ${cleaned}`);
+  if (ipRateLimits.has('10.0.0.1')) throw new Error('Expired entry 10.0.0.1 was not removed');
+  if (ipRateLimits.has('10.0.0.3')) throw new Error('Expired entry 10.0.0.3 was not removed');
+  if (!ipRateLimits.has('10.0.0.2')) throw new Error('Active entry 10.0.0.2 was prematurely removed');
+  console.log('✓ ipRateLimits expired entries successfully cleaned while active entries preserved');
+
+  // ─── Unit Test 2: Client IP Extraction & TRUST_PROXY Security Guard ───────
+  console.log('\n📋 Unit Test 2: Client IP Extraction & TRUST_PROXY Security Guard');
+  const mockReqDirect = {
+    socket: { remoteAddress: '192.168.1.10' },
+    headers: { 'x-forwarded-for': '203.0.113.10' }
+  };
+
+  // Default: TRUST_PROXY disabled (false) -> must ignore spoofed header
+  delete process.env.TRUST_PROXY;
+  const directIp = getClientIp(mockReqDirect);
+  if (directIp !== '192.168.1.10') throw new Error(`Expected direct socket remoteAddress '192.168.1.10', got '${directIp}'`);
+  console.log('✓ Untrusted environment rejects spoofed X-Forwarded-For header and uses socket remoteAddress');
+
+  // Trusted proxy enabled (TRUST_PROXY=true) -> parse first client IP
+  process.env.TRUST_PROXY = 'true';
+  const mockReqProxy = {
+    socket: { remoteAddress: '127.0.0.1' },
+    headers: { 'x-forwarded-for': '203.0.113.10, 10.0.0.2' }
+  };
+  const proxyIp = getClientIp(mockReqProxy);
+  if (proxyIp !== '203.0.113.10') throw new Error(`Expected trusted proxy client IP '203.0.113.10', got '${proxyIp}'`);
+  console.log('✓ Trusted proxy environment extracts primary client IP from X-Forwarded-For');
+  delete process.env.TRUST_PROXY;
+
+  // ─── End-to-End Signaling Server Tests ────────────────────────────────────
+  console.log('\n📡 Starting End-to-End Signaling Server Tests...');
 
   // Start server process
   const serverProc = spawn('node', ['src/server/signaling-server.js'], {
