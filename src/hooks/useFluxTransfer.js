@@ -19,6 +19,61 @@ export function useFluxTransfer() {
 
   const engineRef = useRef(null);
   const selectedFileRef = useRef(null);
+  const wakeLockRef = useRef(null);
+
+  // Best-effort Screen Wake Lock helpers for mobile transfers
+  const requestWakeLock = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') {
+      return;
+    }
+    try {
+      if (!wakeLockRef.current) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+        });
+      }
+    } catch (_) {
+      // Best-effort optional feature; continue transfer if browser rejects wake lock
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+      } catch (_) {}
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  // Re-acquire Wake Lock when page becomes visible during an active transfer
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && engineState === 'transferring') {
+        requestWakeLock();
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [engineState, requestWakeLock]);
+
+  // Acquire Wake Lock on active transfer; release when idle, completed, failed, or cancelled
+  useEffect(() => {
+    if (engineState === 'transferring') {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+  }, [engineState, requestWakeLock, releaseWakeLock]);
 
   useEffect(() => {
     // Instantiate WebRTC engine
@@ -85,11 +140,12 @@ export function useFluxTransfer() {
     });
 
     return () => {
+      releaseWakeLock();
       try {
         engine.disconnect();
       } catch (e) {}
     };
-  }, []);
+  }, [releaseWakeLock]);
 
   const createSendSession = useCallback(async (file) => {
     if (!file || !engineRef.current) return;
@@ -137,10 +193,11 @@ export function useFluxTransfer() {
     setReceivedFileUrl(null);
     setReceivedFileName('');
     setErrorMessage('');
+    releaseWakeLock();
     if (engineRef.current) {
       engineRef.current.disconnect();
     }
-  }, []);
+  }, [releaseWakeLock]);
 
   return {
     engineState,

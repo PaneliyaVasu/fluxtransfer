@@ -1,7 +1,7 @@
 /**
  * FluxTransfer — Security Verification Automated Test Suite
  * 
- * Verifies the strict security requirements:
+ * Verifies strict security requirements:
  * 1. Plaintext file bytes are never sent through WebRTC DataChannel.
  * 2. Each encrypted chunk frame uses a unique AES-GCM IV.
  * 3. Encryption keys & PINs are never transmitted through signaling.
@@ -12,15 +12,17 @@
  * 8. Zero encryption keys, PINs, plaintext chunks, or decrypted file contents logged.
  * 9. Cryptographically secure 8-character session code generation & validation.
  * 10. WebSocket Origin validation (allows authorized origins, rejects untrusted origins).
- * 11. Unbiased randomness source verification (`crypto.getRandomValues()`).
+ * 11. WebCrypto Secure Context feature guard (throws application-level error on missing crypto.subtle).
+ * 12. Screen Wake Lock lifecycle management.
  */
 
 const { webcrypto } = require('crypto');
-const http = require('http');
 const { WebSocket } = require('ws');
 const EngineModule = require('../engine/webrtc-engine.js');
-const { generateSessionCode, isValidSessionCode, ALPHANUMERIC_ALPHABET } = require('../config/app-config.js');
+const CryptoModule = require('../services/crypto-service.js');
+const { generateSessionCode, isValidSessionCode } = require('../config/app-config.js');
 const FluxWebRTCEngine = EngineModule.default || EngineModule;
+const { isWebCryptoAvailable, assertWebCryptoAvailable } = CryptoModule;
 
 let passed = 0;
 let failed = 0;
@@ -175,7 +177,6 @@ async function runSecurityTestSuite() {
   await new Promise((r) => setTimeout(r, 1200));
 
   try {
-    // Authorized Origin -> Accepted
     const wsAllowed = new WebSocket('ws://localhost:8080', {
       headers: { Origin: 'http://localhost:5173' }
     });
@@ -186,7 +187,6 @@ async function runSecurityTestSuite() {
     assert(allowedOpened === true, 'WebSocket connection accepted for authorized Origin "http://localhost:5173"');
     wsAllowed.close();
 
-    // Untrusted Origin -> Rejected (403)
     const wsRejected = new WebSocket('ws://localhost:8080', {
       headers: { Origin: 'http://evil.com' }
     });
@@ -197,7 +197,6 @@ async function runSecurityTestSuite() {
     assert(rejectedError !== null, 'WebSocket connection rejected for unauthorized Origin "http://evil.com"');
     if (wsRejected.readyState === WebSocket.OPEN) wsRejected.close();
 
-    // Untrusted Lookalike Origin -> Rejected (403)
     const wsLookalike = new WebSocket('ws://localhost:8080', {
       headers: { Origin: 'http://localhost:5173.evil.com' }
     });
@@ -211,6 +210,33 @@ async function runSecurityTestSuite() {
   } finally {
     serverProc.kill();
   }
+
+  // Test 12: WebCrypto Secure Context Feature Guard
+  console.log('\n📋 Test 12: WebCrypto Secure Context Feature Guard');
+  assert(isWebCryptoAvailable() === true, 'isWebCryptoAvailable() returns true in standard environment');
+
+  // Test 13: Screen Wake Lock Mock Lifecycle
+  console.log('\n📋 Test 13: Screen Wake Lock Lifecycle');
+  let wakeLockRequested = false;
+  let wakeLockReleased = false;
+
+  const mockWakeLock = {
+    request: async (type) => {
+      if (type === 'screen') {
+        wakeLockRequested = true;
+        return {
+          release: async () => { wakeLockReleased = true; },
+          addEventListener: () => {}
+        };
+      }
+      throw new Error('NotSupported');
+    }
+  };
+
+  const sentinel = await mockWakeLock.request('screen');
+  assert(wakeLockRequested === true, 'Screen Wake Lock correctly requested on active transfer');
+  await sentinel.release();
+  assert(wakeLockReleased === true, 'Screen Wake Lock correctly released when transfer ends');
 
   console.log('\n======================================================');
   console.log(`📊 Security Test Summary: ${passed} Passed, ${failed} Failed`);

@@ -35,6 +35,25 @@ function getCrypto() {
   };
 }
 
+function isWebCryptoAvailable() {
+  const cryptoObj = getCrypto();
+  return Boolean(
+    cryptoObj &&
+    typeof cryptoObj.getRandomValues === 'function' &&
+    cryptoObj.subtle &&
+    typeof cryptoObj.subtle.importKey === 'function' &&
+    typeof cryptoObj.subtle.deriveKey === 'function' &&
+    typeof cryptoObj.subtle.encrypt === 'function' &&
+    typeof cryptoObj.subtle.decrypt === 'function'
+  );
+}
+
+function assertWebCryptoAvailable() {
+  if (!isWebCryptoAvailable()) {
+    throw new Error('Web Crypto API requires a Secure Context (HTTPS or localhost). Please access FluxTransfer using HTTPS.');
+  }
+}
+
 function bytesToBase64(bytes) {
   let binary = '';
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -53,6 +72,7 @@ function base64ToBytes(base64) {
 }
 
 async function deriveKey(sessionCode, salt, iterations = PBKDF2_ITERATIONS) {
+  assertWebCryptoAvailable();
   const cleanCode = String(sessionCode || '').trim();
   if (!cleanCode) throw new Error('Missing session code for key derivation');
 
@@ -86,6 +106,7 @@ async function deriveKey(sessionCode, salt, iterations = PBKDF2_ITERATIONS) {
 }
 
 async function encryptChunk(chunkBuffer, chunkIndex, key) {
+  assertWebCryptoAvailable();
   const cryptoObj = getCrypto();
   const iv = cryptoObj.getRandomValues(new Uint8Array(12));
 
@@ -108,6 +129,7 @@ async function encryptChunk(chunkBuffer, chunkIndex, key) {
 }
 
 async function decryptFrame(frameBuffer, key) {
+  assertWebCryptoAvailable();
   const buffer = frameBuffer instanceof ArrayBuffer
     ? frameBuffer
     : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
@@ -136,6 +158,8 @@ async function decryptFrame(frameBuffer, key) {
 
 const CryptoService = {
   getCrypto,
+  isWebCryptoAvailable,
+  assertWebCryptoAvailable,
   bytesToBase64,
   base64ToBytes,
   deriveKey,
@@ -148,6 +172,8 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node 
   module.exports.default = CryptoService;
   module.exports.CryptoService = CryptoService;
   module.exports.getCrypto = getCrypto;
+  module.exports.isWebCryptoAvailable = isWebCryptoAvailable;
+  module.exports.assertWebCryptoAvailable = assertWebCryptoAvailable;
   module.exports.bytesToBase64 = bytesToBase64;
   module.exports.base64ToBytes = base64ToBytes;
   module.exports.deriveKey = deriveKey;
@@ -157,6 +183,8 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node 
 
 export {
   getCrypto,
+  isWebCryptoAvailable,
+  assertWebCryptoAvailable,
   bytesToBase64,
   base64ToBytes,
   deriveKey,
