@@ -4,17 +4,20 @@
  * Exercises:
  * 1. Room pairing & role assignment (Initiator vs Joiner)
  * 2. Signaling message relay (SDP Offer/Answer & ICE candidates)
- * 3. File metadata frame structure & backpressure configuration
+ * 3. File metadata frame structure & backpressure configuration (128 KB chunks)
  * 4. Deterministic Metadata Readiness Protocol (Sender wait for metadata-ack, early chunk queueing)
- * 5. Completion acknowledgment ('ack-complete') lifecycle
- * 6. Cancellation protocol ('cancel')
+ * 5. In-flight incremental SHA-256 hashing & 'transfer-complete' protocol
+ * 6. Completion acknowledgment ('ack-complete') lifecycle
+ * 7. Cancellation protocol ('cancel')
  */
 
 const { WebSocket } = require('ws');
 const { spawn } = require('child_process');
 const { webcrypto } = require('crypto');
 const EngineModule = require('../engine/webrtc-engine.js');
+const HashModule = require('../services/hash-service.js');
 const FluxWebRTCEngine = EngineModule.default || EngineModule;
+const StreamingSHA256 = HashModule.StreamingSHA256;
 
 async function runTestSuite() {
   console.log('\n==================================================');
@@ -115,18 +118,17 @@ async function runTestSuite() {
     assert(receivedAnswer.answer.sdp === dummyAnswer.sdp, 'SDP Answer correctly relayed to Initiator');
 
 
-    // ── Test 3: Encrypted Chunk Protocol & Metadata Ack ───────────────────────
-    console.log('\n📋 Test Group 3: Encrypted Chunk Protocol & Metadata Ack Handshake');
+    // ── Test 3: Encrypted Chunk Protocol & In-Flight Incremental SHA-256 ──────
+    console.log('\n📋 Test Group 3: Encrypted Chunk Protocol & In-Flight SHA-256 (128 KB Chunks)');
 
     const engine = new FluxWebRTCEngine();
     const sessionCode = '123456';
-    const testFileSize = 180 * 1024; // 180 KB
-    const chunkSize = 64 * 1024; // 64 KB
+    const testFileSize = 180 * 1024; // 180 KB (128 KB chunk 0 + 52 KB chunk 1)
+    const chunkSize = 128 * 1024; // 128 KB
     const mockFileBuffer = Buffer.alloc(testFileSize, 'a');
 
     const salt = webcrypto.getRandomValues(new Uint8Array(16));
     const aesKey = await engine.deriveKey(sessionCode, salt);
-    const fileHash = await engine._computeHash(new Blob([mockFileBuffer]));
 
     const metadata = {
       type: 'metadata',
@@ -135,20 +137,22 @@ async function runTestSuite() {
       mimeType: 'application/pdf',
       chunkSize: chunkSize,
       totalChunks: Math.ceil(testFileSize / chunkSize),
-      salt: Buffer.from(salt).toString('base64'),
-      hash: fileHash
+      salt: Buffer.from(salt).toString('base64')
     };
 
     assert(metadata.type === 'metadata', 'Metadata frame contains required "type" field');
     assert(metadata.name === 'test_document.pdf', 'Metadata frame contains file name');
     assert(metadata.size === testFileSize, 'Metadata frame contains file size');
+    assert(metadata.chunkSize === 128 * 1024, 'Metadata frame specifies 128 KB chunk size');
+    assert(metadata.totalChunks === 2, '180 KB file correctly yields 2 total chunks');
     assert(typeof metadata.salt === 'string', 'Metadata frame contains base64 salt');
-    assert(typeof metadata.hash === 'string', 'Metadata frame contains SHA-256 hash');
 
-    // Receiver derives same key
+    // Receiver derives same key and initializes incremental hasher
     const receiverKey = await engine.deriveKey(sessionCode, Buffer.from(metadata.salt, 'base64'));
+    const senderHasher = new StreamingSHA256();
+    const receiverHasher = new StreamingSHA256();
 
-    // Encrypt & decrypt chunks
+    // Encrypt & decrypt chunks while updating hashers incrementally in-flight
     const receivedChunks = [];
     let receivedBytes = 0;
     let chunkIndex = 0;
@@ -156,10 +160,16 @@ async function runTestSuite() {
     for (let offset = 0; offset < testFileSize; offset += chunkSize) {
       const slice = mockFileBuffer.subarray(offset, Math.min(offset + chunkSize, testFileSize));
       const rawChunk = slice.buffer.slice(slice.byteOffset, slice.byteOffset + slice.byteLength);
-      const encryptedFrame = await engine.encryptChunk(rawChunk, chunkIndex, aesKey);
+      
+      // Update sender hasher
+      senderHasher.update(new Uint8Array(rawChunk));
 
+      const encryptedFrame = await engine.encryptChunk(rawChunk, chunkIndex, aesKey);
       const decrypted = await engine.decryptFrame(encryptedFrame.buffer, receiverKey);
       assert(decrypted.chunkIndex === chunkIndex, `Decrypted chunk index matches expected index ${chunkIndex}`);
+
+      // Update receiver hasher
+      receiverHasher.update(new Uint8Array(decrypted.chunkData));
 
       const decryptedBuf = Buffer.from(decrypted.chunkData);
       receivedChunks.push(decryptedBuf);
@@ -169,14 +179,20 @@ async function runTestSuite() {
 
     assert(receivedBytes === testFileSize, 'Receiver accumulated 100% of transmitted file bytes');
 
-    // Reassemble and verify SHA-256
+    // Finalize incremental hashes
+    const senderFinalHash = senderHasher.digestHex();
+    const receiverFinalHash = receiverHasher.digestHex();
+
+    assert(senderFinalHash === receiverFinalHash, 'In-flight sender and receiver SHA-256 hashes match exactly');
+
+    // Reassemble and verify SHA-256 against whole file
     const reassembledBuffer = Buffer.concat(receivedChunks);
     assert(reassembledBuffer.equals(mockFileBuffer), 'Reassembled file byte contents match original byte-for-byte');
 
-    const computedReceiverHash = await engine._computeHash(new Blob([reassembledBuffer]));
-    assert(computedReceiverHash === fileHash, 'Receiver calculated SHA-256 hash matches sender metadata hash');
+    const transferCompleteMsg = { type: 'transfer-complete', hash: senderFinalHash };
+    assert(transferCompleteMsg.type === 'transfer-complete', 'Transfer-complete message frame correctly structured');
 
-    const ackMessage = { type: 'ack-complete', hash: computedReceiverHash };
+    const ackMessage = { type: 'ack-complete', hash: receiverFinalHash };
     assert(ackMessage.type === 'ack-complete', 'Ack-complete message frame correctly structured');
 
 

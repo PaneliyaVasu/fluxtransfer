@@ -8,7 +8,9 @@
  * - Unique 12-byte random IV/nonce per encrypted chunk
  * - ReceiverStorage abstraction (OPFS streaming writer + safe Memory fallback)
  * - Deterministic Metadata Readiness Protocol (Sender wait for metadata-ack with timeout; Bounded Receiver Early Chunk Queue)
- * - SHA-256 file integrity calculation & verification
+ * - In-Flight Incremental SHA-256 integrity calculation & verification (zero pre-transfer or post-transfer full-file hashing delay)
+ * - 128 KB production default chunk size
+ * - Transfer-Complete protocol header with hash exchange
  * - Event-driven, non-bypassing backpressure management
  * - Authoritative transfer state machine (idle, connecting, connected, transferring, completed, failed, cancelled)
  * - Conceptual separation of signaling and WebRTC DataChannel lifecycles
@@ -18,7 +20,7 @@
 
 import APP_CONFIG, { getIceServers, getDefaultSignalingUrl } from '../config/app-config.js';
 import CryptoService, { deriveKey, encryptChunk, decryptFrame, base64ToBytes, bytesToBase64 } from '../services/crypto-service.js';
-import HashService, { computeHash, sha256 } from '../services/hash-service.js';
+import HashService, { computeHash, sha256, StreamingSHA256 } from '../services/hash-service.js';
 import ReceiverStorage, { createReceiverStorage } from '../storage/receiver-storage.js';
 
 class FluxWebRTCEngine {
@@ -77,6 +79,11 @@ class FluxWebRTCEngine {
     this._earlyChunkQueue = null;
     this._onMetadataAckResolver = null;
     this._onMetadataAckRejecter = null;
+
+    // Incremental SHA-256 Hashers
+    this._senderHasher = null;
+    this._receiverHasher = null;
+    this.senderFinalHash = null;
 
     // Encryption Key & Salt
     this.aesKey = null;
@@ -285,7 +292,6 @@ class FluxWebRTCEngine {
 
     this.ws.onerror = () => {
       if (this.transferState === 'completed' || this.transferState === 'transferring') {
-        // Signaling closure does NOT abort an active P2P DataChannel transfer!
         return;
       }
       if (!this._hasTriedFallback && typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:') {
@@ -604,7 +610,7 @@ class FluxWebRTCEngine {
   }
 
   /**
-   * Process binary chunk frame (decryption & storage write)
+   * Process binary chunk frame (decryption, in-flight SHA-256 update, & storage write)
    */
   async _processBinaryChunkFrame(data) {
     if (!this.incomingMeta || !this.aesKey) {
@@ -626,6 +632,11 @@ class FluxWebRTCEngine {
     if (chunkIndex < 0 || chunkIndex >= meta.totalChunks) {
       this._handleTransferFailure('Invalid chunk index received', 'ERR_INVALID_CHUNK_INDEX');
       return;
+    }
+
+    // In-Flight Incremental Receiver SHA-256 Update
+    if (this._receiverHasher) {
+      this._receiverHasher.update(new Uint8Array(chunkData));
     }
 
     if (this.storage) {
@@ -665,7 +676,7 @@ class FluxWebRTCEngine {
       });
     }
 
-    if (isAllChunksReceived && !this.finishStarted) {
+    if (isAllChunksReceived && this.senderFinalHash && !this.finishStarted) {
       this.finishStarted = true;
       await this._finalizeReceiverTransfer();
     }
@@ -686,10 +697,12 @@ class FluxWebRTCEngine {
           this.receivedBytes = 0;
           this.transferStartTime = Date.now();
           this.finishStarted = false;
+          this.senderFinalHash = null;
 
-          // Prepare readiness state & early chunk queue
+          // Prepare readiness state, early chunk queue, and receiver incremental hasher
           this._receiverReady = false;
           this._earlyChunkQueue = [];
+          this._receiverHasher = new StreamingSHA256();
 
           this._setState('transferring');
           this.emit('statusChange', `Initializing receiver for "${msg.name}"…`, 'info');
@@ -743,6 +756,14 @@ class FluxWebRTCEngine {
             this._handleTransferFailure(`Receiver failed to initialize: ${msg.error || 'Initialization error'}`, 'ERR_RECEIVER_INIT_FAILED');
           }
 
+        } else if (msg.type === 'transfer-complete') {
+          console.log('[WebRTC Engine] Sender announced transfer-complete with SHA-256:', msg.hash);
+          this.senderFinalHash = msg.hash;
+          if (this.receivedChunksCount >= (this.incomingMeta ? this.incomingMeta.totalChunks : 0) && !this.finishStarted) {
+            this.finishStarted = true;
+            await this._finalizeReceiverTransfer();
+          }
+
         } else if (msg.type === 'ack-complete') {
           if (this.currentFile || this.isTransferring) {
             const file = this.currentFile;
@@ -756,11 +777,13 @@ class FluxWebRTCEngine {
             };
             this.emit('fileComplete', null, meta);
           }
+
         } else if (msg.type === 'cancel') {
           if (this.storage) {
             await this.storage.abort();
             this.storage = null;
           }
+          this._receiverHasher = null;
           this._setState('cancelled');
           this.emit('statusChange', 'Transfer cancelled by peer.', 'warning');
           this.emit('error', 'Peer cancelled the file transfer.', 'ERR_TRANSFER_CANCELLED');
@@ -792,7 +815,7 @@ class FluxWebRTCEngine {
   }
 
   /**
-   * Finalize received file and verify SHA-256 integrity
+   * Finalize received file and verify SHA-256 integrity against in-flight receiver hash
    */
   async _finalizeReceiverTransfer() {
     const meta = this.incomingMeta;
@@ -807,12 +830,20 @@ class FluxWebRTCEngine {
 
       if (!fileObj) throw new Error('Failed to retrieve file from storage');
 
-      // SHA-256 Integrity Verification
+      // Finalize Receiver Incremental SHA-256
       this.emit('statusChange', 'Verifying SHA-256 file integrity checksum…', 'info');
-      const computedHash = await this._computeHash(fileObj);
+      let computedHash = '';
+      if (this._receiverHasher) {
+        computedHash = this._receiverHasher.digestHex();
+        this._receiverHasher = null;
+      } else {
+        computedHash = await this._computeHash(fileObj);
+      }
 
-      if (computedHash !== meta.hash) {
-        throw new Error(`SHA-256 checksum mismatch (Expected ${meta.hash.slice(0, 8)}…, got ${computedHash.slice(0, 8)}…)`);
+      const expectedHash = this.senderFinalHash;
+
+      if (!expectedHash || computedHash !== expectedHash) {
+        throw new Error(`SHA-256 checksum mismatch (Expected ${expectedHash ? expectedHash.slice(0, 8) : 'none'}…, got ${computedHash.slice(0, 8)}…)`);
       }
 
       // Verification successful
@@ -823,6 +854,7 @@ class FluxWebRTCEngine {
       this._sendControlMessage({ type: 'ack-complete', hash: computedHash });
 
     } catch (err) {
+      this._receiverHasher = null;
       if (this.storage) {
         await this.storage.abort();
         this.storage = null;
@@ -832,7 +864,7 @@ class FluxWebRTCEngine {
   }
 
   /**
-   * Send File over DataChannel with AES-256-GCM E2EE & Event-Driven Backpressure
+   * Send File over DataChannel with AES-256-GCM E2EE & In-Flight Incremental SHA-256 Hashing
    */
   async sendFile(file) {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
@@ -855,22 +887,17 @@ class FluxWebRTCEngine {
     const chunkSize = APP_CONFIG.DEFAULT_CHUNK_SIZE;
     const totalChunks = Math.ceil(file.size / chunkSize);
 
+    // Initialize Sender In-Flight Incremental SHA-256 Hasher
+    this._senderHasher = new StreamingSHA256();
+
     const cryptoObj = CryptoService.getCrypto();
     this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
 
     try {
       this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
     } catch (keyErr) {
+      this._senderHasher = null;
       this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
-      return;
-    }
-
-    this.emit('statusChange', `Calculating SHA-256 hash for "${file.name}"…`, 'info');
-    let fileHash = '';
-    try {
-      fileHash = await this._computeHash(file);
-    } catch (hashErr) {
-      this._handleTransferFailure(`SHA-256 calculation failed: ${hashErr.message}`, 'ERR_HASH_FAILED');
       return;
     }
 
@@ -883,11 +910,10 @@ class FluxWebRTCEngine {
       mimeType: file.type || 'application/octet-stream',
       chunkSize: chunkSize,
       totalChunks: totalChunks,
-      salt: bytesToBase64(this.salt),
-      hash: fileHash
+      salt: bytesToBase64(this.salt)
     };
 
-    // 1. Send Metadata Control Header
+    // 1. Send Metadata Control Header (No pre-calculated hash required)
     this.emit('statusChange', `Waiting for receiver readiness ACK…`, 'info');
     this._sendControlMessage(metadata);
 
@@ -895,11 +921,12 @@ class FluxWebRTCEngine {
     try {
       await this._waitForMetadataAck(APP_CONFIG.METADATA_ACK_TIMEOUT_MS);
     } catch (ackErr) {
+      this._senderHasher = null;
       this._handleTransferFailure(`Transfer initiation failed: ${ackErr.message}`, 'ERR_METADATA_ACK_TIMEOUT');
       return;
     }
 
-    // 3. Metadata acknowledged -> Start binary streaming
+    // 3. Metadata acknowledged -> Start binary streaming & in-flight hashing
     this.emit('statusChange', `Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
 
     let offset = 0;
@@ -923,10 +950,16 @@ class FluxWebRTCEngine {
       const slice = file.slice(offset, offset + chunkSize);
       const chunkBuffer = await slice.arrayBuffer();
 
+      // In-Flight Sender Incremental Hash Update
+      if (this._senderHasher) {
+        this._senderHasher.update(new Uint8Array(chunkBuffer));
+      }
+
       let encryptedFrame;
       try {
         encryptedFrame = await this.encryptChunk(chunkBuffer, chunkIndex, this.aesKey);
       } catch (encErr) {
+        this._senderHasher = null;
         this._handleTransferFailure(`Failed to encrypt chunk ${chunkIndex}: ${encErr.message}`, 'ERR_ENCRYPT_CHUNK');
         return;
       }
@@ -934,6 +967,7 @@ class FluxWebRTCEngine {
       try {
         this.dataChannel.send(encryptedFrame.buffer);
       } catch (err) {
+        this._senderHasher = null;
         this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
         return;
       }
@@ -971,6 +1005,14 @@ class FluxWebRTCEngine {
           await new Promise(r => setTimeout(r, 0));
         }
       }
+    }
+
+    // 4. All chunks sent successfully -> Finalize sender SHA-256 hash & emit transfer-complete
+    if (offset >= file.size && this._senderHasher && this.isTransferring) {
+      const finalSenderHash = this._senderHasher.digestHex();
+      this._senderHasher = null;
+      console.log('[WebRTC Engine] Finalizing sender incremental SHA-256:', finalSenderHash);
+      this._sendControlMessage({ type: 'transfer-complete', hash: finalSenderHash });
     }
   }
 
@@ -1019,6 +1061,9 @@ class FluxWebRTCEngine {
 
   cancelTransfer() {
     if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
+    this._senderHasher = null;
+    this._receiverHasher = null;
+
     if (this.dataChannel && this.dataChannel.readyState === 'open') {
       this._sendControlMessage({ type: 'cancel' });
     }
@@ -1032,6 +1077,9 @@ class FluxWebRTCEngine {
 
   _handlePeerDisconnect(reason) {
     if (this.transferState === 'completed' || this.transferState === 'failed' || this.transferState === 'cancelled') return;
+    this._senderHasher = null;
+    this._receiverHasher = null;
+
     if (this.isTransferring) {
       if (this.storage) {
         this.storage.abort().catch(() => { });
@@ -1043,6 +1091,9 @@ class FluxWebRTCEngine {
 
   _handleTransferFailure(errorMessage, errorCode) {
     if (this.transferState === 'completed' || this.transferState === 'failed' || this.transferState === 'cancelled') return;
+    this._senderHasher = null;
+    this._receiverHasher = null;
+
     if (typeof this._onMetadataAckRejecter === 'function') {
       this._onMetadataAckRejecter(errorMessage);
     }
@@ -1077,6 +1128,10 @@ class FluxWebRTCEngine {
   disconnect() {
     if (this._isDisconnecting) return;
     this._isDisconnecting = true;
+
+    this._senderHasher = null;
+    this._receiverHasher = null;
+    this.senderFinalHash = null;
 
     if (this.storage) {
       this.storage.cleanup().catch(() => { });

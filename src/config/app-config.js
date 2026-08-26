@@ -2,7 +2,7 @@
  * FluxTransfer — Centralized Application Configuration
  */
 
-const DEFAULT_CHUNK_SIZE = 64 * 1024; // 64 KB chunk size for WebRTC DataChannel frames
+const DEFAULT_CHUNK_SIZE = 128 * 1024; // 128 KB chunk size for WebRTC DataChannel frames
 const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB high watermark
 const BUFFER_LOW_WATERMARK = 1 * 1024 * 1024;  // 1 MB low watermark
 const PBKDF2_ITERATIONS = 100000;
