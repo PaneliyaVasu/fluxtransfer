@@ -2,18 +2,101 @@ import React, { useState } from 'react';
 import { Upload, Download, QrCode, FileText, Check, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import jsQR from 'jsqr';
+import QrScanner from './QrScanner.jsx';
+import { buildPairingUrl, extractPairingCode, readPairingCodeFromLocation, clearPairingCodeFromLocation } from '../utils/pairing-url.js';
+
+async function walkDirectoryEntry(entry, out, prefix = '') {
+  if (!entry) return;
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    const relativeName = prefix ? `${prefix}${file.name}` : file.name;
+    if (relativeName !== file.name && typeof File === 'function') {
+      try {
+        out.push(new File([file], relativeName, { type: file.type, lastModified: file.lastModified }));
+        return;
+      } catch (_) {}
+    }
+    out.push(file);
+    return;
+  }
+  if (entry.isDirectory) {
+    const reader = entry.createReader();
+    const nextPrefix = `${prefix}${entry.name}/`;
+    const readBatch = async () => {
+      const entries = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+      if (!entries.length) return;
+      for (const child of entries) {
+        await walkDirectoryEntry(child, out, nextPrefix);
+      }
+      await readBatch();
+    };
+    await readBatch();
+  }
+}
+
+async function collectDroppedFiles(dataTransfer) {
+  const items = dataTransfer?.items;
+  if (items && items.length && typeof items[0].webkitGetAsEntry === 'function') {
+    const files = [];
+    const jobs = [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry();
+      if (entry) jobs.push(walkDirectoryEntry(entry, files));
+    }
+    await Promise.all(jobs);
+    if (files.length) return files;
+  }
+  return Array.from(dataTransfer?.files || []);
+}
 
 export default function TransferDashboard({ transfer, addToast }) {
   const [inputCode, setInputCode] = useState('');
   const [isDragOver, setIsDragOver] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
+  const joinedFromUrlRef = React.useRef(false);
 
   const qrInputRef = React.useRef(null);
 
-  const handleQrScanClick = () => {
+  const applyScannedCode = (code) => {
+    setInputCode(code);
+    code.split('').forEach((char, idx) => {
+      if (digitRefs[idx]?.current) digitRefs[idx].current.value = char;
+    });
+    if (transfer.joinReceiveSession) {
+      transfer.joinReceiveSession(code);
+    }
+    if (addToast) addToast('success', 'QR Code Scanned', `Connecting to code ${code}...`);
+  };
+
+  const handleQrScanClick = async () => {
+    const canUseCamera = typeof navigator !== 'undefined'
+      && navigator.mediaDevices
+      && typeof navigator.mediaDevices.getUserMedia === 'function'
+      && (window.isSecureContext !== false);
+    if (canUseCamera) {
+      setIsQrScannerOpen(true);
+      return;
+    }
     if (qrInputRef.current) {
       qrInputRef.current.value = '';
       qrInputRef.current.click();
+    }
+  };
+
+  const handleQrDetected = (code) => {
+    setIsQrScannerOpen(false);
+    applyScannedCode(code);
+  };
+
+  const handleQrScannerClose = (reason) => {
+    setIsQrScannerOpen(false);
+    if (reason === 'camera-unavailable' || reason === 'camera-denied') {
+      if (addToast) addToast('info', 'Camera unavailable', 'Choose a photo of the QR code instead.');
+      if (qrInputRef.current) {
+        qrInputRef.current.value = '';
+        qrInputRef.current.click();
+      }
     }
   };
 
@@ -32,20 +115,10 @@ export default function TransferDashboard({ transfer, addToast }) {
       const result = jsQR(imageData.data, imageData.width, imageData.height);
 
       if (result && result.data) {
-        const raw = result.data;
-        // Extract 6-digit numeric code from URL (?code=XXXXXX) or raw text
-        const urlMatch = raw.match(/[?&]code=([0-9]{6})/);
-        const code = urlMatch ? urlMatch[1] : (raw.match(/^([0-9]{6})$/) ? raw : null);
+        const code = extractPairingCode(result.data);
 
         if (code) {
-          setInputCode(code);
-          code.split('').forEach((char, idx) => {
-            if (digitRefs[idx]?.current) digitRefs[idx].current.value = char;
-          });
-          if (addToast) addToast('success', 'QR Code Scanned', `Connecting to code ${code}...`);
-          if (transfer.joinReceiveSession) {
-            transfer.joinReceiveSession(code);
-          }
+          applyScannedCode(code);
         } else {
           if (addToast) addToast('error', 'QR Scan Failed', 'No valid 6-digit pairing code found in QR image.');
         }
@@ -80,39 +153,40 @@ export default function TransferDashboard({ transfer, addToast }) {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Auto-connect when scanned via QR code link (?code=123456)
+  // Auto-join when a phone camera opens this site from the QR URL
   React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      const urlCode = params.get('code');
-      if (urlCode && /^[0-9]{6}$/.test(urlCode.trim())) {
-        const cleanCode = urlCode.trim();
-        setInputCode(cleanCode);
+    const cleanCode = readPairingCodeFromLocation();
+    if (!cleanCode || joinedFromUrlRef.current) return;
+    joinedFromUrlRef.current = true;
+    setInputCode(cleanCode);
 
-        const tryJoin = (attempts = 0) => {
-          if (transfer.joinReceiveSession) {
-            transfer.joinReceiveSession(cleanCode);
-            if (addToast) addToast('info', 'QR Code Scanned', `Connecting to code ${cleanCode}...`);
-            window.history.replaceState({}, document.title, window.location.pathname);
-          } else if (attempts < 10) {
-            setTimeout(() => tryJoin(attempts + 1), 100);
-          }
-        };
-
-        setTimeout(tryJoin, 150);
+    const tryJoin = (attempts = 0) => {
+      if (transfer.joinReceiveSession) {
+        transfer.joinReceiveSession(cleanCode);
+        if (addToast) addToast('info', 'QR Code Opened', `Connecting to code ${cleanCode}...`);
+        clearPairingCodeFromLocation();
+      } else if (attempts < 20) {
+        setTimeout(() => tryJoin(attempts + 1), 100);
       }
-    }
-  }, []);
+    };
+
+    setTimeout(tryJoin, 80);
+  }, [addToast, transfer.joinReceiveSession]);
 
   const {
     engineState,
     role,
     pairingCode,
     selectedFile,
+    selectedFiles = selectedFile ? [selectedFile] : [],
     transferProgress,
     transferSpeed,
     transferredBytes,
     totalBytes,
+    currentFileIndex = 0,
+    totalFiles = selectedFiles.length || 1,
+    currentFileName = '',
+    receivedFiles = [],
     receivedFileBlob,
     receivedFileUrl,
     receivedFileName,
@@ -121,14 +195,52 @@ export default function TransferDashboard({ transfer, addToast }) {
     cancelTransfer
   } = transfer;
 
+  const downloadReceivedItem = async (item) => {
+    if (!item) return;
+    if ('showSaveFilePicker' in window && item.blob) {
+      try {
+        const ext = item.name && item.name.includes('.') ? `.${item.name.split('.').pop()}` : undefined;
+        const handle = await window.showSaveFilePicker({
+          suggestedName: item.name || 'downloaded-file',
+          types: item.type && ext ? [{ description: 'Received file', accept: { [item.type]: [ext] } }] : undefined
+        });
+        const writable = await handle.createWritable();
+        await writable.write(item.blob);
+        await writable.close();
+        if (addToast) addToast('success', 'File Saved', `Saved directly to disk: ${item.name || 'file'}`);
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    if (!item.url) return;
+    const a = document.createElement('a');
+    a.href = item.url;
+    a.download = item.name || 'downloaded-file';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => document.body.removeChild(a), 100);
+  };
+
   const handleDownloadFile = async (e) => {
     if (e) e.preventDefault();
+    const latest = receivedFiles[receivedFiles.length - 1];
+    if (latest) {
+      await downloadReceivedItem(latest);
+      return;
+    }
     if (!receivedFileBlob && !receivedFileUrl) return;
 
     if ('showSaveFilePicker' in window) {
       try {
+        const ext = receivedFileName && receivedFileName.includes('.')
+          ? `.${receivedFileName.split('.').pop()}`
+          : undefined;
         const handle = await window.showSaveFilePicker({
-          suggestedName: receivedFileName || 'downloaded-file'
+          suggestedName: receivedFileName || 'downloaded-file',
+          types: receivedFileBlob?.type && ext
+            ? [{ description: 'Received file', accept: { [receivedFileBlob.type]: [ext] } }]
+            : undefined
         });
         const writable = await handle.createWritable();
         if (receivedFileBlob) {
@@ -154,22 +266,28 @@ export default function TransferDashboard({ transfer, addToast }) {
     setTimeout(() => document.body.removeChild(a), 100);
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      createSendSession(file);
-      if (addToast) addToast('info', 'File Selected', `Ready to send: ${file.name}`);
+  const startSendWithFiles = (files) => {
+    const list = (files || []).filter(Boolean).slice(0, 100);
+    if (!list.length) return;
+    createSendSession(list);
+    if (addToast) {
+      addToast(
+        'info',
+        list.length === 1 ? 'File Selected' : 'Files Selected',
+        list.length === 1 ? `Ready to send: ${list[0].name}` : `Ready to send ${list.length} files`
+      );
     }
   };
 
-  const handleDrop = (e) => {
+  const handleFileSelect = (e) => {
+    startSendWithFiles(Array.from(e.target.files || []));
+  };
+
+  const handleDrop = async (e) => {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      createSendSession(file);
-      if (addToast) addToast('info', 'File Selected', `Ready to send: ${file.name}`);
-    }
+    const files = await collectDroppedFiles(e.dataTransfer);
+    startSendWithFiles(files);
   };
 
   const handleJoinSession = () => {
@@ -224,9 +342,12 @@ export default function TransferDashboard({ transfer, addToast }) {
     cancelTransfer();
   };
 
-  const isCompleted = engineState === 'completed' || transferProgress === 100;
-  const isSending = role === 'sender' || Boolean(selectedFile);
-  const isReceiving = role === 'receiver' || Boolean(receivedFileUrl) || (engineState !== 'idle' && !selectedFile);
+  const isCompleted = engineState === 'completed';
+  const isSending = role === 'sender' || selectedFiles.length > 0;
+  const isReceiving = role === 'receiver' || receivedFiles.length > 0 || Boolean(receivedFileUrl);
+  const fileCount = Math.max(totalFiles || 0, selectedFiles.length, receivedFiles.length, 1);
+  const activeName = currentFileName || selectedFile?.name || receivedFileName || (fileCount > 1 ? `${fileCount} files` : 'Incoming File');
+  const batchLabel = fileCount > 1 ? `File ${Math.min(currentFileIndex + 1, fileCount)} of ${fileCount}` : null;
 
   const renderTransferProgressCard = () => (
     <div
@@ -250,8 +371,12 @@ export default function TransferDashboard({ transfer, addToast }) {
             </h4>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
               {isCompleted
-                ? (isSending ? 'File sent successfully to peer' : 'File received successfully')
-                : (isSending ? 'Sending file to peer' : 'Receiving file from peer')}
+                ? (isSending
+                  ? (fileCount > 1 ? `All ${fileCount} files sent` : 'File sent successfully to peer')
+                  : (fileCount > 1 ? `All ${fileCount} files received` : 'File received successfully'))
+                : (isSending
+                  ? (batchLabel ? `Sending ${batchLabel.toLowerCase()}` : 'Sending file to peer')
+                  : (batchLabel ? `Receiving ${batchLabel.toLowerCase()}` : 'Receiving file from peer'))}
             </div>
           </div>
           <span
@@ -317,7 +442,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               ? `${transferProgress}% Transferring`
               : engineState === 'connecting'
               ? 'Connecting...'
-              : selectedFile
+              : selectedFiles.length
               ? 'Ready for Receiver'
               : 'Idle'}
           </span>
@@ -366,11 +491,11 @@ export default function TransferDashboard({ transfer, addToast }) {
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '4px' }}>
-              {selectedFile?.name || receivedFileName || 'Incoming File'}
+              {batchLabel ? `${batchLabel} · ${activeName}` : activeName}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', gap: '8px' }}>
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFile?.size || 0)}
+                {formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}
               </span>
               {engineState === 'transferring' && (
                 <span style={{ fontWeight: 700, color: '#7c3aed', flexShrink: 0 }}>⚡ {transferSpeed}</span>
@@ -378,10 +503,37 @@ export default function TransferDashboard({ transfer, addToast }) {
             </div>
           </div>
         </div>
+
+        {(selectedFiles.length > 1 || receivedFiles.length > 1) && (
+          <div style={{ maxHeight: '112px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
+            {(receivedFiles.length ? receivedFiles : selectedFiles).map((item, idx) => {
+              const done = receivedFiles.length
+                ? true
+                : isCompleted || idx < currentFileIndex || (engineState === 'transferring' && idx < currentFileIndex);
+              const active = !receivedFiles.length && idx === currentFileIndex && !isCompleted;
+              return (
+                <div key={`${item.name}-${idx}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '0.75rem', color: done ? '#059669' : active ? '#7c3aed' : 'var(--text-muted)' }}>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {done ? '✓' : active ? '→' : '○'} {item.name}
+                  </span>
+                  {item.url && (
+                    <button
+                      type="button"
+                      onClick={() => downloadReceivedItem(item)}
+                      style={{ border: 'none', background: 'transparent', color: '#7c3aed', cursor: 'pointer', fontWeight: 700, flexShrink: 0 }}
+                    >
+                      Save
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
-        {receivedFileUrl && (
+        {(receivedFileUrl || receivedFiles.length > 0) && (
           <button
             onClick={handleDownloadFile}
             className="glass-btn glass-btn-dark"
@@ -400,7 +552,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               cursor: 'pointer'
             }}
           >
-            Download File <Download size={15} />
+            {receivedFiles.length > 1 ? 'Download Last' : 'Download File'} <Download size={15} />
           </button>
         )}
 
@@ -419,7 +571,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               cursor: 'pointer'
             }}
           >
-            Send Another File ✨
+            Send More Files ✨
           </button>
         ) : (
           <button
@@ -464,7 +616,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
             </div>
 
-            {selectedFile && (
+            {selectedFiles.length > 0 && (
               <button
                 onClick={handleCancel}
                 className="glass-btn"
@@ -491,7 +643,7 @@ export default function TransferDashboard({ transfer, addToast }) {
 
           {isReceiving ? (
             renderTransferProgressCard()
-          ) : !selectedFile ? (
+          ) : !selectedFiles.length ? (
             <div
               className="dropzone-box"
               onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
@@ -510,6 +662,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               <input
                 type="file"
                 id="file-upload-input"
+                multiple
                 onChange={handleFileSelect}
                 style={{ display: 'none' }}
               />
@@ -521,7 +674,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                   Ready to share?
                 </h4>
                 <p className="dropzone-subtitle" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  Drag files or tap to browse
+                  Drag files or a folder, or tap to browse
                 </p>
               </label>
             </div>
@@ -532,10 +685,12 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
               <div>
                 <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
-                  File Delivered Successfully! 🎉
+                  {selectedFiles.length > 1 ? 'Files Delivered Successfully! 🎉' : 'File Delivered Successfully! 🎉'}
                 </h4>
                 <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                  {selectedFile?.name || 'File'} ({formatBytes(selectedFile?.size)})
+                  {selectedFiles.length > 1
+                    ? `${selectedFiles.length} files · ${formatBytes(selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`
+                    : `${selectedFile?.name || 'File'} (${formatBytes(selectedFile?.size)})`}
                 </p>
               </div>
             </div>
@@ -562,10 +717,10 @@ export default function TransferDashboard({ transfer, addToast }) {
 
               <div
                 style={{
-                  width: '148px',
-                  height: '148px',
+                  width: '176px',
+                  height: '176px',
                   margin: '0 auto 4px auto',
-                  padding: '8px',
+                  padding: '10px',
                   background: '#ffffff',
                   borderRadius: '16px',
                   boxShadow: '0 8px 24px rgba(124, 58, 237, 0.12)',
@@ -575,17 +730,52 @@ export default function TransferDashboard({ transfer, addToast }) {
                 }}
               >
                 <QRCodeSVG
-                  value={
-                    typeof window !== 'undefined' && pairingCode
-                      ? `${window.location.origin}/?code=${pairingCode}`
-                      : pairingCode || '------'
-                  }
-                  size={132}
+                  value={pairingCode ? buildPairingUrl(pairingCode) : (typeof window !== 'undefined' ? window.location.origin : 'https://fluxtransfer.app')}
+                  size={156}
                   bgColor="#ffffff"
                   fgColor="#0f172a"
-                  level="M"
+                  level="H"
+                  includeMargin={false}
                 />
               </div>
+              <div style={{ marginTop: '8px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                Scan to open FluxTransfer and join this transfer
+              </div>
+              {pairingCode && (
+                <button
+                  type="button"
+                  className="glass-btn"
+                  onClick={async () => {
+                    const url = buildPairingUrl(pairingCode);
+                    try {
+                      if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(url);
+                        if (addToast) addToast('success', 'Link copied', 'Share this link if QR scanning is unavailable.');
+                      }
+                    } catch (_) {
+                      if (addToast) addToast('info', 'Pairing link', url);
+                    }
+                  }}
+                  style={{
+                    marginTop: '8px',
+                    height: '34px',
+                    padding: '0 12px',
+                    borderRadius: '10px',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Copy site link
+                </button>
+              )}
+              {selectedFiles.length > 0 && (
+                <div style={{ marginTop: '12px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  {selectedFiles.length === 1
+                    ? selectedFiles[0].name
+                    : `${selectedFiles.length} files ready · ${formatBytes(selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -684,6 +874,9 @@ export default function TransferDashboard({ transfer, addToast }) {
           )}
         </div>
       </div>
+      {isQrScannerOpen && (
+        <QrScanner onDetected={handleQrDetected} onClose={handleQrScannerClose} />
+      )}
     </div>
   );
 }

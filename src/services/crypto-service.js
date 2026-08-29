@@ -9,7 +9,18 @@ if (typeof process !== 'undefined' && process.versions && process.versions.node 
   } catch (_) {}
 }
 
-function getCrypto() {
+function hasSubtleApi(cryptoObj) {
+  return Boolean(
+    cryptoObj &&
+    cryptoObj.subtle &&
+    typeof cryptoObj.subtle.importKey === 'function' &&
+    typeof cryptoObj.subtle.deriveKey === 'function' &&
+    typeof cryptoObj.subtle.encrypt === 'function' &&
+    typeof cryptoObj.subtle.decrypt === 'function'
+  );
+}
+
+function getNativeCrypto() {
   if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.getRandomValues === 'function') {
     return window.crypto;
   }
@@ -27,8 +38,44 @@ function getCrypto() {
       }
     } catch (_) { }
   }
+  return null;
+}
+
+function getSoftwareCryptoApi() {
+  if (typeof globalThis !== 'undefined' && hasSubtleApi(globalThis.FluxSoftwareCrypto)) {
+    return globalThis.FluxSoftwareCrypto;
+  }
+  if (typeof require === 'function') {
+    try {
+      const mod = require('../utils/software-crypto.js');
+      const factory = mod.createSoftwareCrypto || (mod.default && mod.default.createSoftwareCrypto);
+      const api = typeof factory === 'function' ? factory() : null;
+      if (api && typeof globalThis !== 'undefined') {
+        globalThis.FluxSoftwareCrypto = api;
+      }
+      return api;
+    } catch (_) { }
+  }
+  return null;
+}
+
+function getCrypto() {
+  const native = getNativeCrypto();
+  if (hasSubtleApi(native)) return native;
+
+  const software = getSoftwareCryptoApi();
+  if (software && hasSubtleApi(software)) {
+    const rng = (native && typeof native.getRandomValues === 'function')
+      ? native.getRandomValues.bind(native)
+      : software.getRandomValues.bind(software);
+    return { getRandomValues: rng, subtle: software.subtle };
+  }
+
   return {
     getRandomValues: (arr) => {
+      if (native && typeof native.getRandomValues === 'function') {
+        return native.getRandomValues(arr);
+      }
       for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
       return arr;
     }
@@ -36,16 +83,7 @@ function getCrypto() {
 }
 
 function isWebCryptoAvailable() {
-  const cryptoObj = getCrypto();
-  return Boolean(
-    cryptoObj &&
-    typeof cryptoObj.getRandomValues === 'function' &&
-    cryptoObj.subtle &&
-    typeof cryptoObj.subtle.importKey === 'function' &&
-    typeof cryptoObj.subtle.deriveKey === 'function' &&
-    typeof cryptoObj.subtle.encrypt === 'function' &&
-    typeof cryptoObj.subtle.decrypt === 'function'
-  );
+  return hasSubtleApi(getCrypto());
 }
 
 function assertWebCryptoAvailable() {

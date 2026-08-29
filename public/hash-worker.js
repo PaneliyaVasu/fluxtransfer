@@ -1,9 +1,28 @@
 /**
  * FluxTransfer — Off-Main-Thread Streaming SHA-256 Worker
- * 
- * Computes SHA-256 checksums incrementally in chunks without loading
- * entire files into RAM or blocking the main thread UI.
+ *
+ * Primary path : native crypto.subtle.digest  (hardware-accelerated)
+ * Fallback path: streaming JS SHA-256
  */
+
+const hasFastCrypto = typeof crypto !== 'undefined' && crypto.subtle &&
+  typeof crypto.subtle.digest === 'function';
+
+async function hashFileNative(file) {
+  const SINGLE_SHOT_LIMIT = 512 * 1024 * 1024;
+  if (file.size <= SINGLE_SHOT_LIMIT) {
+    const buf = await file.arrayBuffer();
+    const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+    return hexFromBuffer(hashBuf);
+  }
+  return hashFileJS(file);
+}
+
+function hexFromBuffer(buf) {
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 class StreamingSHA256 {
   constructor() {
@@ -120,29 +139,36 @@ class StreamingSHA256 {
   }
 }
 
+async function hashFileJS(file) {
+  const chunkSize = 2 * 1024 * 1024;
+  const hasher = new StreamingSHA256();
+  let offset = 0;
+  const total = file.size;
+
+  while (offset < total) {
+    const slice = file.slice(offset, Math.min(offset + chunkSize, total));
+    const buf = await slice.arrayBuffer();
+    hasher.update(new Uint8Array(buf));
+    offset += buf.byteLength;
+
+    if (offset < total && (offset % (chunkSize * 5) === 0)) {
+      self.postMessage({ type: 'progress', offset, total });
+    }
+  }
+
+  return hasher.digestHex();
+}
+
 let activeHasher = null;
 
 self.onmessage = async function (e) {
-  const { type, file, chunk, chunkSize = 1024 * 1024, id } = e.data || {};
+  const { type, file, chunk, id } = e.data || {};
 
   try {
     if (type === 'hash-file' && file) {
-      const hasher = new StreamingSHA256();
-      let offset = 0;
-      const total = file.size;
-
-      while (offset < total) {
-        const slice = file.slice(offset, Math.min(offset + chunkSize, total));
-        const buf = await slice.arrayBuffer();
-        hasher.update(new Uint8Array(buf));
-        offset += buf.byteLength;
-
-        if (offset < total && (offset % (chunkSize * 5) === 0)) {
-          self.postMessage({ type: 'progress', id, offset, total });
-        }
-      }
-
-      const hash = hasher.digestHex();
+      const hash = hasFastCrypto
+        ? await hashFileNative(file)
+        : await hashFileJS(file);
       self.postMessage({ type: 'complete', id, hash });
 
     } else if (type === 'init') {

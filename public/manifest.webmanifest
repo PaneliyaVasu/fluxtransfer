@@ -1,0 +1,17 @@
+{
+  "name": "FluxTransfer",
+  "short_name": "FluxTransfer",
+  "description": "Private peer-to-peer file transfer in your browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0D1512",
+  "theme_color": "#0D1512",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

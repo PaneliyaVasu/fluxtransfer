@@ -1,37 +1,70 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { installSoftwareCrypto } from '../utils/software-crypto.js';
 import FluxWebRTCEngine from '../engine/webrtc-engine.js';
 import { generateSessionCode, isValidSessionCode } from '../config/app-config.js';
 
+if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
+  installSoftwareCrypto(globalThis);
+}
+
+function normalizeFiles(fileOrFiles) {
+  if (!fileOrFiles) return [];
+  if (typeof FileList !== 'undefined' && fileOrFiles instanceof FileList) {
+    return Array.from(fileOrFiles);
+  }
+  if (Array.isArray(fileOrFiles)) return fileOrFiles.filter(Boolean);
+  return [fileOrFiles];
+}
+
+function triggerBrowserDownload(file, url) {
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name || 'received-file';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      if (document.body.contains(a)) document.body.removeChild(a);
+    }, 1000);
+  } catch (downloadErr) {
+    console.warn('[FluxTransfer] Auto-download error:', downloadErr);
+  }
+}
+
 export function useFluxTransfer() {
-  const [engineState, setEngineState] = useState('idle'); // idle, connecting, connected, transferring, completed, failed, cancelled
-  const [role, setRole] = useState(null); // 'sender' | 'receiver'
+  const [engineState, setEngineState] = useState('idle');
+  const [role, setRole] = useState(null);
   const [pairingCode, setPairingCode] = useState('');
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFiles, setSelectedFiles] = useState([]);
   const [transferProgress, setTransferProgress] = useState(0);
   const [transferSpeed, setTransferSpeed] = useState('0 MB/s');
   const [transferredBytes, setTransferredBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState(0);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
+  const [totalFiles, setTotalFiles] = useState(1);
+  const [currentFileName, setCurrentFileName] = useState('');
+  const [receivedFiles, setReceivedFiles] = useState([]);
   const [receivedFileBlob, setReceivedFileBlob] = useState(null);
   const [receivedFileUrl, setReceivedFileUrl] = useState(null);
   const [receivedFileName, setReceivedFileName] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
   const engineRef = useRef(null);
-  const selectedFileRef = useRef(null);
+  const selectedFilesRef = useRef([]);
   const wakeLockRef = useRef(null);
-  const receivedFileUrlRef = useRef(null);
+  const receivedUrlsRef = useRef([]);
 
-  const revokeActiveFileUrl = useCallback(() => {
-    if (receivedFileUrlRef.current) {
-      try {
-        URL.revokeObjectURL(receivedFileUrlRef.current);
-      } catch (_) {}
-      receivedFileUrlRef.current = null;
-    }
+  const selectedFile = selectedFiles[0] || null;
+
+  const revokeAllFileUrls = useCallback(() => {
+    receivedUrlsRef.current.forEach((url) => {
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    });
+    receivedUrlsRef.current = [];
   }, []);
 
-  // Best-effort Screen Wake Lock helpers for mobile transfers
   const requestWakeLock = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') {
       return;
@@ -44,28 +77,23 @@ export function useFluxTransfer() {
         });
       }
     } catch (_) {
-      // Best-effort optional feature; continue transfer if browser rejects wake lock
       wakeLockRef.current = null;
     }
   }, []);
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
-      try {
-        await wakeLockRef.current.release();
-      } catch (_) {}
+      try { await wakeLockRef.current.release(); } catch (_) {}
       wakeLockRef.current = null;
     }
   }, []);
 
-  // Re-acquire Wake Lock when page becomes visible during an active transfer
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && engineState === 'transferring') {
         requestWakeLock();
       }
     };
-
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleVisibilityChange);
     }
@@ -76,75 +104,79 @@ export function useFluxTransfer() {
     };
   }, [engineState, requestWakeLock]);
 
-  // Acquire Wake Lock on active transfer; release when idle, completed, failed, or cancelled
   useEffect(() => {
     if (engineState === 'transferring') {
       requestWakeLock();
-    } else {
+    } else if (engineState !== 'connected') {
       releaseWakeLock();
     }
   }, [engineState, requestWakeLock, releaseWakeLock]);
 
   useEffect(() => {
-    // Instantiate WebRTC engine
     const EngineClass = FluxWebRTCEngine || window.FluxWebRTCEngine;
     const engine = new EngineClass();
     engineRef.current = engine;
 
-    // Single source of truth: engine state drives React engineState
     engine.on('stateChange', (state) => {
       setEngineState(state);
-      if (state === 'connected' && selectedFileRef.current && !engine.isTransferring && engine.dataChannel && engine.dataChannel.readyState === 'open') {
-        engine.sendFile(selectedFileRef.current);
-      }
     });
 
     engine.on('dataChannelOpen', () => {
-      if (selectedFileRef.current && !engine.isTransferring) {
-        engine.sendFile(selectedFileRef.current);
+      if (selectedFilesRef.current.length && !engine.isTransferring) {
+        engine.sendFiles(selectedFilesRef.current);
       }
     });
 
     engine.on('progress', (info) => {
-      if (typeof info === 'object') {
-        const percent = info.percent ?? info.percentage ?? 0;
-        setTransferProgress(Math.round(percent));
-        setTransferredBytes(info.transferredBytes || 0);
-        setTotalBytes(info.totalBytes || 0);
-        if (info.speedBps) {
-          const speedMB = (info.speedBps / (1024 * 1024)).toFixed(2);
-          setTransferSpeed(`${speedMB} MB/s`);
-        }
+      if (typeof info !== 'object') return;
+      const percent = info.percent ?? info.percentage ?? 0;
+      setTransferProgress(Math.round(percent));
+      setTransferredBytes(info.transferredBytes || 0);
+      setTotalBytes(info.totalBytes || 0);
+      setCurrentFileIndex(info.fileIndex ?? 0);
+      setTotalFiles(info.fileCount || 1);
+      if (info.fileName) setCurrentFileName(info.fileName);
+      if (info.speedBps) {
+        const speedMB = (info.speedBps / (1024 * 1024)).toFixed(2);
+        setTransferSpeed(`${speedMB} MB/s`);
+        const remaining = (info.totalBytes || 0) - (info.transferredBytes || 0);
+        setEtaSeconds(info.speedBps > 0 ? Math.max(0, Math.round(remaining / info.speedBps)) : 0);
       }
     });
 
-    engine.on('fileComplete', ({ blob, fileName }) => {
-      if (blob) {
-        setReceivedFileBlob(blob);
-        revokeActiveFileUrl();
-        const url = URL.createObjectURL(blob);
-        receivedFileUrlRef.current = url;
-        setReceivedFileUrl(url);
-        const finalName = fileName || 'received-file';
-        setReceivedFileName(finalName);
-
-        // Automatic Download Trigger on File Transfer Completion
-        try {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = finalName;
-          a.style.display = 'none';
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            if (document.body.contains(a)) {
-              document.body.removeChild(a);
-            }
-          }, 1000);
-        } catch (downloadErr) {
-          console.warn('[FluxTransfer] Auto-download error:', downloadErr);
-        }
+    engine.on('fileMetadata', (meta) => {
+      if (meta?.type === 'batch-manifest') {
+        setTotalFiles(meta.totalFiles || meta.files?.length || 1);
+        setTotalBytes(meta.totalBytes || 0);
+        setCurrentFileIndex(0);
+        return;
       }
+      if (meta?.name) setCurrentFileName(meta.name);
+      if (typeof meta?.fileIndex === 'number') setCurrentFileIndex(meta.fileIndex);
+      if (typeof meta?.fileCount === 'number') setTotalFiles(meta.fileCount);
+    });
+
+    engine.on('fileComplete', ({ blob, fileName, fileType, fileIndex, fileCount }) => {
+      if (typeof fileIndex === 'number') setCurrentFileIndex(fileIndex);
+      if (typeof fileCount === 'number') setTotalFiles(fileCount);
+
+      if (!blob) return;
+
+      const finalName = fileName || blob.name || 'received-file';
+      const mime = fileType || blob.type || 'application/octet-stream';
+      const downloadFile = (blob instanceof File && blob.name === finalName)
+        ? blob
+        : new File([blob], finalName, { type: mime || blob.type || 'application/octet-stream' });
+
+      const url = URL.createObjectURL(downloadFile);
+      receivedUrlsRef.current.push(url);
+
+      setReceivedFiles((prev) => [...prev, { name: finalName, url, blob: downloadFile, type: mime }]);
+      setReceivedFileBlob(downloadFile);
+      setReceivedFileUrl(url);
+      setReceivedFileName(finalName);
+      setCurrentFileName(finalName);
+      triggerBrowserDownload(downloadFile, url);
     });
 
     engine.on('error', (err) => {
@@ -153,21 +185,23 @@ export function useFluxTransfer() {
 
     return () => {
       releaseWakeLock();
-      revokeActiveFileUrl();
-      try {
-        engine.disconnect();
-      } catch (e) {}
+      revokeAllFileUrls();
+      try { engine.disconnect(); } catch (_) {}
     };
-  }, [releaseWakeLock, revokeActiveFileUrl]);
+  }, [releaseWakeLock, revokeAllFileUrls]);
 
-  const createSendSession = useCallback(async (file) => {
-    if (!file || !engineRef.current) return;
-    selectedFileRef.current = file;
-    setSelectedFile(file);
+  const createSendSession = useCallback(async (fileOrFiles) => {
+    const files = normalizeFiles(fileOrFiles);
+    if (!files.length || !engineRef.current) return;
+    selectedFilesRef.current = files;
+    setSelectedFiles(files);
+    setCurrentFileName(files[0].name);
+    setCurrentFileIndex(0);
+    setTotalFiles(files.length);
+    setTotalBytes(files.reduce((sum, file) => sum + (file.size || 0), 0));
     setRole('sender');
     setErrorMessage('');
 
-    // Generate 6-digit cryptographically secure numeric session code
     const code = generateSessionCode(6);
     setPairingCode(code);
 
@@ -194,16 +228,21 @@ export function useFluxTransfer() {
   }, []);
 
   const cancelTransfer = useCallback(() => {
-    selectedFileRef.current = null;
-    setSelectedFile(null);
+    selectedFilesRef.current = [];
+    setSelectedFiles([]);
     setRole(null);
     setPairingCode('');
+    setEngineState('idle');
     setTransferProgress(0);
     setTransferSpeed('0 MB/s');
     setTransferredBytes(0);
     setTotalBytes(0);
+    setCurrentFileIndex(0);
+    setTotalFiles(1);
+    setCurrentFileName('');
+    setReceivedFiles([]);
     setReceivedFileBlob(null);
-    revokeActiveFileUrl();
+    revokeAllFileUrls();
     setReceivedFileUrl(null);
     setReceivedFileName('');
     setErrorMessage('');
@@ -211,18 +250,23 @@ export function useFluxTransfer() {
     if (engineRef.current) {
       engineRef.current.disconnect();
     }
-  }, [releaseWakeLock, revokeActiveFileUrl]);
+  }, [releaseWakeLock, revokeAllFileUrls]);
 
   return {
     engineState,
     role,
     pairingCode,
     selectedFile,
+    selectedFiles,
     transferProgress,
     transferSpeed,
     transferredBytes,
     totalBytes,
     etaSeconds,
+    currentFileIndex,
+    totalFiles,
+    currentFileName,
+    receivedFiles,
     receivedFileBlob,
     receivedFileUrl,
     receivedFileName,

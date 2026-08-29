@@ -45,12 +45,14 @@ self.onmessage = async function (e) {
         accessHandle = null;
       }
 
-      let fileObj = null;
-      if (fileHandle) {
-        fileObj = await fileHandle.getFile();
+      if (!fileHandle) {
+        self.postMessage({ type: 'finalize-ack', id, buffer: new ArrayBuffer(0) });
+        return;
       }
 
-      self.postMessage({ type: 'finalize-ack', id, file: fileObj });
+      const fileObj = await fileHandle.getFile();
+      const buffer = await fileObj.arrayBuffer();
+      self.postMessage({ type: 'finalize-ack', id, buffer, name: fileName }, [buffer]);
 
     } else if (type === 'preserve' || type === 'close-handle') {
       if (accessHandle) {

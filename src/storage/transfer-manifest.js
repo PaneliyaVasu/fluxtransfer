@@ -231,6 +231,10 @@ const TransferManifestManager = {
   cleanupExpiredManifests
 };
 
+if (typeof globalThis !== 'undefined') {
+  globalThis.FluxTransferManifest = TransferManifestManager;
+}
+
 if (typeof process !== 'undefined' && process.versions && process.versions.node && typeof module !== 'undefined' && module.exports) {
   module.exports = TransferManifestManager;
   module.exports.default = TransferManifestManager;

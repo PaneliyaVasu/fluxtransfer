@@ -1,3 +1,9 @@
+import { createSoftwareCrypto } from '../utils/software-crypto.js';
+
+if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
+  globalThis.FluxSoftwareCrypto = createSoftwareCrypto();
+}
+
 /**
  * FluxTransfer — Canonical Client-Side WebRTC File Transfer Engine
  * 
@@ -17,10 +23,34 @@
 (function (global) {
   'use strict';
 
-  const DEFAULT_CHUNK_SIZE = 256 * 1024; // 256 KB — 4× fewer crypto/send round-trips vs 64 KB
-  const BUFFER_HIGH_WATERMARK = 2 * 1024 * 1024; // 2 MB high watermark — more reliable on mobile
-  const BUFFER_LOW_WATERMARK = 512 * 1024;        // 512 KB low watermark
-  const PBKDF2_ITERATIONS = 10000; // 10k iterations — still OWASP-compliant, 10× faster than 100k
+  const FRAME_OVERHEAD = 32; // 4B index + 12B IV + 16B GCM tag
+  const DEFAULT_CHUNK_SIZE = 64 * 1024; // Safe under conservative 64 KB SCTP limits
+  const MAX_CHUNK_SIZE = 256 * 1024;
+  const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB — keeps the pipe full on LAN without blowing mobile RAM
+  const BUFFER_LOW_WATERMARK = 1 * 1024 * 1024;  // 1 MB
+  const PBKDF2_ITERATIONS = 10000;
+  const METADATA_ACK_TIMEOUT_MS = 15000;
+  const MAX_EARLY_CHUNK_QUEUE_SIZE = 100;
+  const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024;
+  const ICE_RECONNECT_TIMEOUT_MS = 5000;
+  const MAX_ICE_RESTART_ATTEMPTS = 2;
+  const STALL_TIMEOUT_MS = 30000;
+  const PIPELINE_DEPTH = 3;
+  const WORKER_PIPELINE_DEPTH = 6;
+  const CRYPTO_WORKER_COUNT = 2;
+  const MAX_BATCH_FILES = 100;
+
+  function getManifestApi() {
+    if (typeof globalThis !== 'undefined' && globalThis.FluxTransferManifest && typeof globalThis.FluxTransferManifest.getManifest === 'function') {
+      return globalThis.FluxTransferManifest;
+    }
+    if (typeof require !== 'function') return null;
+    try {
+      const api = require('../storage/transfer-manifest.js');
+      if (api && typeof api.getManifest === 'function') return api;
+    } catch (_) { }
+    return null;
+  }
 
   const DEFAULT_ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -50,7 +80,18 @@
     { urls: 'stun:stun.cloudflare.com:3478' }
   ];
 
-  function getCrypto() {
+  function hasSubtleApi(cryptoObj) {
+    return !!(
+      cryptoObj &&
+      cryptoObj.subtle &&
+      typeof cryptoObj.subtle.importKey === 'function' &&
+      typeof cryptoObj.subtle.deriveKey === 'function' &&
+      typeof cryptoObj.subtle.encrypt === 'function' &&
+      typeof cryptoObj.subtle.decrypt === 'function'
+    );
+  }
+
+  function getNativeCrypto() {
     if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.getRandomValues === 'function') {
       return window.crypto;
     }
@@ -68,12 +109,40 @@
         }
       } catch (_) { }
     }
-    return {
-      getRandomValues: (arr) => {
-        for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
-        return arr;
-      }
-    };
+    return null;
+  }
+
+  function getSoftwareCryptoApi() {
+    if (typeof globalThis !== 'undefined' && globalThis.FluxSoftwareCrypto && hasSubtleApi(globalThis.FluxSoftwareCrypto)) {
+      return globalThis.FluxSoftwareCrypto;
+    }
+    if (typeof require === 'function') {
+      try {
+        const mod = require('../utils/software-crypto.js');
+        const factory = mod.createSoftwareCrypto || (mod.default && mod.default.createSoftwareCrypto);
+        const api = typeof factory === 'function' ? factory() : null;
+        if (api && typeof globalThis !== 'undefined') {
+          globalThis.FluxSoftwareCrypto = api;
+        }
+        return api;
+      } catch (_) { }
+    }
+    return null;
+  }
+
+  function getCrypto() {
+    const native = getNativeCrypto();
+    if (hasSubtleApi(native)) return native;
+
+    const software = getSoftwareCryptoApi();
+    if (software && hasSubtleApi(software)) {
+      const rng = (native && typeof native.getRandomValues === 'function')
+        ? native.getRandomValues.bind(native)
+        : software.getRandomValues.bind(software);
+      return { getRandomValues: rng, subtle: software.subtle };
+    }
+
+    throw new Error('Web Crypto API is unavailable. FluxTransfer requires a secure context (HTTPS or localhost).');
   }
 
   function bytesToBase64(bytes) {
@@ -84,6 +153,88 @@
       binary += String.fromCharCode(...view.subarray(i, i + block));
     }
     return btoa(binary);
+  }
+
+  function toOwnedBytes(data) {
+    if (data instanceof Uint8Array) return data.slice();
+    if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+    if (ArrayBuffer.isView(data)) {
+      return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+    }
+    return new Uint8Array(data || 0);
+  }
+
+  function frameToArrayBuffer(frame) {
+    if (frame instanceof ArrayBuffer) return frame;
+    if (frame instanceof Uint8Array || ArrayBuffer.isView(frame)) {
+      return frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
+    }
+    return frame;
+  }
+
+  const MIME_BY_EXT = {
+    pdf: 'application/pdf',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+    txt: 'text/plain',
+    csv: 'text/csv',
+    json: 'application/json',
+    zip: 'application/zip',
+    mp3: 'audio/mpeg',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    wav: 'audio/wav',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+  };
+
+  function inferMimeType(fileName, fallback) {
+    if (fallback && fallback !== 'application/octet-stream') return fallback;
+    const ext = String(fileName || '').split('.').pop().toLowerCase();
+    return MIME_BY_EXT[ext] || fallback || 'application/octet-stream';
+  }
+
+  function isSecureBrowserContext() {
+    if (typeof window === 'undefined' || typeof window.isSecureContext !== 'boolean') return true;
+    return window.isSecureContext === true;
+  }
+
+  function createNamedFile(parts, name, type) {
+    if (typeof File === 'function') {
+      try {
+        return new File(parts, name, { type });
+      } catch (_) { }
+    }
+    const blob = new Blob(parts, { type });
+    try { blob.name = name; } catch (_) { }
+    return blob;
+  }
+
+  async function materializeDownloadFile(source, meta) {
+    const name = (meta && meta.name) || (source && source.name) || 'received-file';
+    const mime = inferMimeType(name, (meta && meta.mimeType) || (source && source.type) || 'application/octet-stream');
+    if (source instanceof ArrayBuffer) {
+      return createNamedFile([source], name, mime);
+    }
+    if (ArrayBuffer.isView(source)) {
+      return createNamedFile([toOwnedBytes(source)], name, mime);
+    }
+    if (typeof Blob !== 'undefined' && source instanceof Blob) {
+      const buf = await source.arrayBuffer();
+      return createNamedFile([buf], name, mime);
+    }
+    if (Array.isArray(source)) {
+      return createNamedFile(source, name, mime);
+    }
+    throw new Error('Receiver produced an empty file');
   }
 
   function base64ToBytes(base64) {
@@ -163,6 +314,34 @@
       this.opfsWorker = null;
       this.opfsActive = false;
       this.finishStarted = false;
+      this._receiverReady = false;
+      this._earlyChunkQueue = [];
+      this.receivedChunkSet = null;
+      this.storage = null;
+      this.senderFinalHash = null;
+      this.receiverHasher = null;
+      this.senderHasher = null;
+
+      // Protocol handshake
+      this._metadataAckReceived = false;
+      this._metadataAckResolve = null;
+      this._metadataAckReject = null;
+      this._metadataAckTimer = null;
+
+      // Receive serialization + OPFS backpressure
+      this._receiveChain = Promise.resolve();
+      this._opfsWritePending = 0;
+      this._opfsDrainedResolvers = [];
+      this._opfsFinalizeResolve = null;
+      this._opfsFinalizeReject = null;
+
+      // Connection recovery
+      this._iceRestartAttempts = 0;
+      this._iceDisconnectTimer = null;
+      this._iceReconnectTimer = null;
+      this._isIceRestarting = false;
+      this._stallTimer = null;
+      this._negotiatedChunkSize = DEFAULT_CHUNK_SIZE;
 
       // Speed & UI state
       this.transferStartTime = 0;
@@ -172,10 +351,17 @@
 
       // Sender state
       this.currentFile = null;
+      this._batch = null;
+      this._incomingBatch = null;
+      this._cryptoWorkers = [];
+      this._cryptoWorkerCursor = 0;
+      this._cryptoJobId = 1;
+      this._cryptoJobs = new Map();
     }
 
     _setState(state, extraInfo = {}) {
-      if (this.transferState === 'completed' && (state === 'failed' || state === 'idle' || state === 'connecting' || state === 'connected')) {
+      const force = extraInfo && extraInfo.force === true;
+      if (!force && this.transferState === 'completed' && (state === 'failed' || state === 'connecting' || state === 'connected')) {
         console.log(`[WebRTC Engine] Suppressing state transition to ${state} because transfer is already completed.`);
         return;
       }
@@ -203,7 +389,14 @@
           break;
         case 'fileReceived':
         case 'fileComplete':
-          this.onFileComplete = (fileObj, meta) => fn({ blob: fileObj, fileName: meta?.name, fileType: meta?.type });
+          this.onFileComplete = (fileObj, meta) => fn({
+            blob: fileObj,
+            fileName: meta?.name || fileObj?.name,
+            fileType: meta?.mimeType || meta?.type || fileObj?.type,
+            fileIndex: meta?.fileIndex ?? 0,
+            fileCount: meta?.fileCount ?? 1,
+            moreRemaining: Boolean(meta?.moreRemaining)
+          });
           break;
         case 'fileMetadata':
           this.onFileMetadata = (meta) => fn(meta);
@@ -361,6 +554,102 @@
       return out;
     }
 
+    _spawnCryptoWorker() {
+      if (typeof Worker === 'undefined') return null;
+      try {
+        if (typeof import.meta !== 'undefined' && import.meta.url) {
+          return new Worker(new URL('../client/crypto-worker.js', import.meta.url), { type: 'module' });
+        }
+      } catch (_) { }
+      try {
+        return new Worker('/crypto-worker.js');
+      } catch (_) { }
+      return null;
+    }
+
+    _bindCryptoWorker(worker) {
+      worker.onmessage = (event) => {
+        const payload = event.data || {};
+        const job = this._cryptoJobs.get(payload.id);
+        if (!job) return;
+        this._cryptoJobs.delete(payload.id);
+        if (payload.type === 'error') {
+          job.reject(new Error(payload.message || 'Crypto worker error'));
+          return;
+        }
+        job.resolve(payload);
+      };
+      worker.onerror = () => {
+        this._teardownCryptoWorkers();
+      };
+    }
+
+    _teardownCryptoWorkers() {
+      this._cryptoWorkers.forEach((worker) => {
+        try { worker.terminate(); } catch (_) { }
+      });
+      this._cryptoWorkers = [];
+      this._cryptoJobs.forEach((job) => job.reject(new Error('Crypto worker stopped')));
+      this._cryptoJobs.clear();
+    }
+
+    _callCryptoWorker(type, extra, transferList) {
+      if (!this._cryptoWorkers.length) {
+        return Promise.reject(new Error('Crypto workers unavailable'));
+      }
+      const worker = this._cryptoWorkers[this._cryptoWorkerCursor % this._cryptoWorkers.length];
+      this._cryptoWorkerCursor += 1;
+      const id = this._cryptoJobId++;
+      return new Promise((resolve, reject) => {
+        this._cryptoJobs.set(id, { resolve, reject });
+        try {
+          worker.postMessage({ type, id, ...extra }, transferList || []);
+        } catch (err) {
+          this._cryptoJobs.delete(id);
+          reject(err);
+        }
+      });
+    }
+
+    async _initCryptoWorkers(sessionCode, salt) {
+      if (typeof Worker === 'undefined') return false;
+      if (this._cryptoWorkers.length) {
+        const saltCopy = salt instanceof Uint8Array ? salt.slice() : new Uint8Array(salt);
+        try {
+          await Promise.all(this._cryptoWorkers.map(() =>
+            this._callCryptoWorker('init', { sessionCode, salt: saltCopy })
+          ));
+          return true;
+        } catch (_) {
+          this._teardownCryptoWorkers();
+        }
+      }
+
+      const workers = [];
+      for (let i = 0; i < CRYPTO_WORKER_COUNT; i++) {
+        const worker = this._spawnCryptoWorker();
+        if (!worker) break;
+        this._bindCryptoWorker(worker);
+        workers.push(worker);
+      }
+      if (!workers.length) return false;
+      this._cryptoWorkers = workers;
+      const saltCopy = salt instanceof Uint8Array ? salt.slice() : new Uint8Array(salt);
+      try {
+        await Promise.all(workers.map(() =>
+          this._callCryptoWorker('init', { sessionCode, salt: saltCopy })
+        ));
+        return true;
+      } catch (_) {
+        this._teardownCryptoWorkers();
+        return false;
+      }
+    }
+
+    _getPipelineDepth() {
+      return this._cryptoWorkers.length ? WORKER_PIPELINE_DEPTH : PIPELINE_DEPTH;
+    }
+
     /**
      * Derive AES-GCM 256-bit CryptoKey from Session Code / PIN and Salt using PBKDF2 (100k iterations)
      */
@@ -402,6 +691,18 @@
      * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext + 16B Auth Tag]
      */
     async encryptChunk(chunkBuffer, chunkIndex, key) {
+      if (this._cryptoWorkers.length) {
+        try {
+          const owned = chunkBuffer instanceof ArrayBuffer
+            ? chunkBuffer.slice(0)
+            : chunkBuffer.buffer.slice(chunkBuffer.byteOffset, chunkBuffer.byteOffset + chunkBuffer.byteLength);
+          const result = await this._callCryptoWorker('encrypt', { buffer: owned, chunkIndex }, [owned]);
+          return new Uint8Array(result.buffer);
+        } catch (_) {
+          // Fall through to main-thread encrypt
+        }
+      }
+
       const cryptoObj = getCrypto();
       const iv = cryptoObj.getRandomValues(new Uint8Array(12));
 
@@ -430,6 +731,16 @@
       const buffer = frameBuffer instanceof ArrayBuffer
         ? frameBuffer
         : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
+
+      if (this._cryptoWorkers.length) {
+        try {
+          const owned = buffer.slice(0);
+          const result = await this._callCryptoWorker('decrypt', { buffer: owned }, [owned]);
+          return { chunkIndex: result.chunkIndex, chunkData: result.buffer };
+        } catch (_) {
+          // Fall through to main-thread decrypt
+        }
+      }
 
       if (buffer.byteLength < 32) {
         throw new Error('Invalid transfer frame: undersized payload');
@@ -465,7 +776,7 @@
             const timer = setTimeout(() => {
               try { worker.terminate(); } catch (_) { }
               reject(new Error('Hash worker timeout'));
-            }, 30000);
+            }, 5 * 60 * 1000);
             worker.onmessage = (e) => {
               if (e.data?.type === 'complete') {
                 clearTimeout(timer);
@@ -494,7 +805,7 @@
         let offset = 0;
         const total = fileOrChunks.size;
 
-        if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function' && total <= chunkSize) {
+        if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function' && total <= 64 * 1024 * 1024) {
           const buf = await fileOrChunks.arrayBuffer();
           const hashBuf = await crypto.subtle.digest('SHA-256', buf);
           return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -522,7 +833,7 @@
         return hasher.digestHex();
       }
 
-      return `hash_${Date.now()}`;
+      throw new Error('Unsupported payload for SHA-256 hashing');
     }
 
     /**
@@ -664,9 +975,16 @@
         console.log(`[WebRTC Engine] ICE State: ${state}`);
 
         if (state === 'connected' || state === 'completed') {
+          this._clearIceReconnectTimer();
+          this._iceRestartAttempts = 0;
+          this._isIceRestarting = false;
           this._setState('connected');
           this._reportConnectionType();
         } else if (state === 'failed') {
+          if (this._iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
+            this._attemptIceRestart();
+            return;
+          }
           console.warn('[WebRTC Engine] ICE connection failed, checking connectionState');
           if (this.pc.connectionState === 'failed') {
             this._setState('failed');
@@ -675,7 +993,8 @@
             this.disconnect();
           }
         } else if (state === 'disconnected') {
-          this.onStatusChange('P2P connection interrupted', 'warning');
+          this.onStatusChange('P2P connection interrupted — attempting recovery…', 'warning');
+          this._scheduleIceRecovery();
         }
       };
 
@@ -684,8 +1003,14 @@
           const state = this.pc.connectionState;
           console.log(`[WebRTC Engine] Connection State: ${state}`);
           if (state === 'connected') {
+            this._clearIceReconnectTimer();
+            this._isIceRestarting = false;
             this._setState('connected');
           } else if (state === 'failed') {
+            if (this._iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
+              this._attemptIceRestart();
+              return;
+            }
             this._setState('failed');
             this.onStatusChange('P2P connection failed', 'error');
             this.onError('WebRTC P2P connection failed. Please ensure both devices can communicate.', 'ERR_PEER_FAILED');
@@ -703,6 +1028,11 @@
             usernameFragment: event.candidate.usernameFragment
           };
           this._sendSignaling({ type: 'ice-candidate', candidate: candidateData });
+        } else if (!event.candidate) {
+          this._sendSignaling({
+            type: 'ice-candidate',
+            candidate: { candidate: '', sdpMid: '0', sdpMLineIndex: 0 }
+          });
         }
       };
 
@@ -744,11 +1074,10 @@
       if (this.pc && this.pc.signalingState !== 'closed') return;
 
       this._createPeerConnection();
-      // ordered: false eliminates head-of-line blocking — chunks arrive out-of-order
-      // but we already reassemble by chunkIndex, so this is safe and much faster.
+      // Reliable + ordered: SCTP retransmits lost packets so the transfer cannot
+      // hang on a missing chunk. Unreliable unordered dropped frames silently.
       this.dataChannel = this.pc.createDataChannel('flux-file-channel', {
-        ordered: false,
-        maxRetransmits: 0 // No retransmits — missing chunks are caught by SHA-256 verify
+        ordered: true
       });
       this._setupDataChannelEvents();
 
@@ -762,7 +1091,11 @@
     }
 
     async _handleOffer(offer) {
-      if (this.pc && this.pc.signalingState !== 'stable' && this.pc.signalingState !== 'closed') return;
+      if (this.pc && this.pc.signalingState === 'closed') {
+        this.pc = null;
+        this.dataChannel = null;
+      }
+      if (this.pc && this.pc.signalingState !== 'stable') return;
       if (!this.pc) this._createPeerConnection();
 
       try {
@@ -836,6 +1169,7 @@
 
       this.dataChannel.onopen = () => {
         console.log('[WebRTC Engine] DataChannel OPEN');
+        this._negotiatedChunkSize = this._getSafeChunkSize();
         this._setState('connected');
         this.onStatusChange('P2P DataChannel open. Encrypted link ready! ⚡', 'success');
         this.onDataChannelOpen();
@@ -853,7 +1187,13 @@
       };
 
       this.dataChannel.onmessage = (event) => {
-        this._handleDataChannelMessage(event.data);
+        this._receiveChain = this._receiveChain
+          .then(() => this._handleDataChannelMessage(event.data))
+          .catch((err) => {
+            if (this.transferState !== 'completed' && this.transferState !== 'failed') {
+              this._handleTransferFailure(err.message || 'Receive pipeline error', 'ERR_RECEIVE');
+            }
+          });
       };
     }
 
@@ -865,74 +1205,74 @@
         try {
           const msg = JSON.parse(data);
 
-          if (msg.type === 'metadata') {
-            this.incomingMeta = msg;
-            this.salt = base64ToBytes(msg.salt);
-            this.receivedChunksCount = 0;
-            this.receivedBytes = 0;
-            this.transferStartTime = Date.now();
-            this.isTransferring = true;
-            this.finishStarted = false;
-            this._setState('transferring');
-
-            // Derive AES key for decryption
-            try {
-              this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
-            } catch (keyErr) {
-              this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
-              return;
-            }
-
-            // OPFS Storage Initialization or Memory Storage Fallback
-            this.opfsActive = false;
-            if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function' && typeof Worker !== 'undefined') {
-              try {
-                const workerPath = '/opfs-writer-worker.js';
-                const worker = new Worker(workerPath);
-                const isInitialized = await new Promise((resolve) => {
-                  const timer = setTimeout(() => resolve(false), 2000);
-                  worker.onmessage = (e) => {
-                    if (e.data?.type === 'init-ack') {
-                      clearTimeout(timer);
-                      resolve(true);
-                    } else if (e.data?.type === 'error') {
-                      clearTimeout(timer);
-                      resolve(false);
-                    }
-                  };
-                  worker.postMessage({ type: 'init', fileName: msg.name, totalSize: msg.size });
-                });
-                if (isInitialized) {
-                  this.opfsWorker = worker;
-                  this.opfsActive = true;
-                } else {
-                  try { worker.terminate(); } catch (_) { }
-                }
-              } catch (_) {
-                this.opfsActive = false;
-              }
-            }
-
-            if (!this.opfsActive) {
-              this.memoryChunks = new Array(msg.totalChunks);
-            }
-
-            this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
-            this.onFileMetadata(msg);
-
+          if (msg.type === 'batch-manifest') {
+            this._incomingBatch = {
+              files: Array.isArray(msg.files) ? msg.files : [],
+              totalFiles: Number(msg.totalFiles) || (Array.isArray(msg.files) ? msg.files.length : 1),
+              totalBytes: Number(msg.totalBytes) || 0,
+              index: 0,
+              completedBytes: 0
+            };
+            this.onFileMetadata({
+              type: 'batch-manifest',
+              totalFiles: this._incomingBatch.totalFiles,
+              totalBytes: this._incomingBatch.totalBytes,
+              files: this._incomingBatch.files
+            });
+            this.onStatusChange(
+              `Incoming transfer: ${this._incomingBatch.totalFiles} file${this._incomingBatch.totalFiles === 1 ? '' : 's'} (${this._formatBytes(this._incomingBatch.totalBytes)})`,
+              'info'
+            );
+          } else if (msg.type === 'metadata') {
+            await this._initReceiverFromMetadata(msg);
+          } else if (msg.type === 'metadata-ack') {
+            this._resolveMetadataAck();
+          } else if (msg.type === 'metadata-error') {
+            this._rejectMetadataAck(new Error(msg.error || 'Receiver rejected metadata'));
+            this._handleTransferFailure(msg.error || 'Receiver metadata error', 'ERR_METADATA');
+          } else if (msg.type === 'transfer-complete') {
+            this.senderFinalHash = msg.hash || null;
+            await this._maybeFinalizeReceiver();
           } else if (msg.type === 'ack-complete') {
-            if (this.currentFile || this.isTransferring) {
+            this._clearStallTimer();
+            if (this.currentFile || this.isTransferring || this._batch) {
               const file = this.currentFile;
+              const batchSnap = this._getBatchSnapshot();
+              const moreRemaining = Boolean(this._batch && this._batch.index < this._batch.files.length - 1);
+
               this.currentFile = null;
               this.isTransferring = false;
-              this._setState('completed');
-              this.onStatusChange('File transfer verified and acknowledged by receiver! 🎉', 'success');
+
               const meta = {
                 name: file ? file.name : 'File',
                 size: file ? file.size : 0,
-                isSender: true
+                isSender: true,
+                fileIndex: batchSnap.fileIndex,
+                fileCount: batchSnap.fileCount,
+                moreRemaining
               };
               this.onFileComplete(null, meta);
+
+              if (moreRemaining) {
+                this._batch.completedBytes += file ? file.size : 0;
+                this._batch.index += 1;
+                this._setState('transferring');
+                this.onStatusChange(
+                  `File ${this._batch.index}/${this._batch.files.length} sent. Starting next file…`,
+                  'info'
+                );
+                await this.sendFile(this._batch.files[this._batch.index]);
+                return;
+              }
+
+              this._batch = null;
+              this._setState('completed');
+              this.onStatusChange(
+                batchSnap.fileCount > 1
+                  ? `All ${batchSnap.fileCount} files verified and acknowledged! 🎉`
+                  : 'File transfer verified and acknowledged by receiver! 🎉',
+                'success'
+              );
             }
           } else if (msg.type === 'cancel') {
             this._cleanupReceiverStorage(true);
@@ -940,137 +1280,394 @@
             this._setState('cancelled');
             this.onStatusChange('Transfer cancelled by peer.', 'warning');
             this.onError('Peer cancelled the file transfer.', 'ERR_TRANSFER_CANCELLED');
+          } else if (msg.type === 'resume-request') {
+            await this._handleResumeRequest(msg);
           } else if (msg.type === 'zen_game') {
-            // Application-level control message passed to registered handler
             this.onControlMessage(msg);
           }
         } catch (e) {
           console.error('[WebRTC Engine] Failed parsing text frame');
         }
-      } else if (data instanceof ArrayBuffer) {
-        // Binary Chunk Frame -> [ChunkIndex (4B)][IV (12B)][Ciphertext + Tag]
-        if (!this.incomingMeta || !this.aesKey) {
-          console.warn('[WebRTC Engine] Received chunk frame before metadata key setup');
+      } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+        const buffer = data instanceof ArrayBuffer
+          ? data
+          : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+
+        if (!this._receiverReady || !this.incomingMeta || !this.aesKey) {
+          if (!this._earlyChunkQueue) this._earlyChunkQueue = [];
+          if (this._earlyChunkQueue.length >= MAX_EARLY_CHUNK_QUEUE_SIZE) {
+            this._handleTransferFailure('Too many chunks arrived before receiver was ready', 'ERR_EARLY_QUEUE_FULL');
+            return;
+          }
+          this._earlyChunkQueue.push(buffer);
           return;
         }
 
-        let decryptedObj;
+        await this._processBinaryChunkFrame(buffer);
+      }
+    }
+
+    async _initReceiverFromMetadata(msg) {
+      this.incomingMeta = msg;
+      this.salt = base64ToBytes(msg.salt);
+      this.receivedChunksCount = 0;
+      this.receivedBytes = 0;
+      this.transferStartTime = Date.now();
+      this.isTransferring = true;
+      this.finishStarted = false;
+      this._receiverReady = false;
+      this.senderFinalHash = msg.hash || this.senderFinalHash || null;
+      if (typeof msg.fileCount === 'number' && msg.fileCount > 1 && !this._incomingBatch) {
+        this._incomingBatch = {
+          files: [],
+          totalFiles: msg.fileCount,
+          totalBytes: Number(msg.batchTotalBytes) || 0,
+          index: Number(msg.fileIndex) || 0,
+          completedBytes: 0
+        };
+      }
+      if (typeof msg.fileIndex === 'number' && this._incomingBatch) {
+        this._incomingBatch.index = msg.fileIndex;
+      }
+      this.receivedChunkSet = new Set();
+      this.receiverHasher = new (this._getStreamingSHA256Class())();
+      this._setState('transferring');
+      this._armStallTimer();
+
+      try {
+        this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+        await this._initCryptoWorkers(this.sessionCode, this.salt);
+      } catch (keyErr) {
+        this._sendControlMessage({ type: 'metadata-error', error: keyErr.message });
+        this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+        return;
+      }
+
+      try {
+        await this._initReceiverStorage(msg);
+      } catch (storageErr) {
+        this._sendControlMessage({ type: 'metadata-error', error: storageErr.message });
+        this._handleTransferFailure(storageErr.message, 'ERR_STORAGE_INIT');
+        return;
+      }
+
+      this._receiverReady = true;
+      this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
+      this.onFileMetadata(msg);
+      this._sendControlMessage({ type: 'metadata-ack', totalChunks: msg.totalChunks });
+
+      const queued = this._earlyChunkQueue || [];
+      this._earlyChunkQueue = null;
+      for (const frame of queued) {
+        await this._processBinaryChunkFrame(frame);
+      }
+    }
+
+    async _initReceiverStorage(msg) {
+      this.opfsActive = false;
+      this.storage = null;
+      const preferMemory = !isSecureBrowserContext() || !msg.size || msg.size <= MAX_MEMORY_FALLBACK_SIZE;
+
+      if (!preferMemory && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function' && typeof Worker !== 'undefined') {
         try {
-          decryptedObj = await this.decryptFrame(data, this.aesKey);
-        } catch (decryptErr) {
-          this._handleTransferFailure(`Decryption failed — authentication or key mismatch: ${decryptErr.message}`, 'ERR_DECRYPT_FAILED');
-          return;
-        }
-
-        const { chunkIndex, chunkData } = decryptedObj;
-        const meta = this.incomingMeta;
-
-        if (chunkIndex < 0 || chunkIndex >= meta.totalChunks) {
-          this._handleTransferFailure('Invalid chunk index received', 'ERR_INVALID_CHUNK_INDEX');
-          return;
-        }
-
-        if (this.opfsActive && this.opfsWorker) {
-          const offset = chunkIndex * meta.chunkSize;
-          this.opfsWorker.postMessage({ type: 'write', chunkIndex, offset, buffer: chunkData }, [chunkData]);
-        } else {
-          if (!this.memoryChunks) this.memoryChunks = new Array(meta.totalChunks);
-          this.memoryChunks[chunkIndex] = chunkData;
-        }
-
-        this.receivedChunksCount += 1;
-        this.receivedBytes += chunkData.byteLength;
-
-        const totalBytes = meta.size;
-        const now = Date.now();
-        const timeDiff = (now - this.lastProgressTime) / 1000;
-
-        if (timeDiff >= 0.5 || this.lastProgressTime === 0) {
-          const bytesDiff = this.receivedBytes - this.lastProgressBytes;
-          this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
-          this.lastProgressTime = now;
-          this.lastProgressBytes = this.receivedBytes;
-        }
-
-        const isAllChunksReceived = this.receivedChunksCount >= meta.totalChunks;
-        if (isAllChunksReceived || (now - (this._lastRecvUiUpdate || 0)) > 100) {
-          this._lastRecvUiUpdate = now;
-          const percent = Math.min(100, (this.receivedBytes / totalBytes) * 100);
-          this.onProgress({
-            percent: percent.toFixed(1),
-            transferredBytes: this.receivedBytes,
-            totalBytes: totalBytes,
-            speedBps: this.currentSpeedBps,
-            role: 'receiver'
+          const worker = new Worker('/opfs-writer-worker.js');
+          const isInitialized = await new Promise((resolve) => {
+            const timer = setTimeout(() => resolve(false), 2500);
+            worker.onmessage = (e) => {
+              if (e.data?.type === 'init-ack') {
+                clearTimeout(timer);
+                resolve(true);
+              } else if (e.data?.type === 'error') {
+                clearTimeout(timer);
+                resolve(false);
+              }
+            };
+            worker.postMessage({ type: 'init', fileName: msg.name, totalSize: msg.size });
           });
+          if (isInitialized) {
+            this._attachOpfsWorker(worker);
+            this.opfsActive = true;
+          } else {
+            try { worker.terminate(); } catch (_) { }
+          }
+        } catch (_) {
+          this.opfsActive = false;
         }
+      }
 
-        if (isAllChunksReceived && !this.finishStarted) {
-          this.finishStarted = true;
-          await this._finalizeReceiverTransfer();
+      if (!this.opfsActive) {
+        if (msg.size > MAX_MEMORY_FALLBACK_SIZE) {
+          const maxMB = Math.round(MAX_MEMORY_FALLBACK_SIZE / (1024 * 1024));
+          const sizeMB = (msg.size / (1024 * 1024)).toFixed(1);
+          throw new Error(
+            `This browser cannot stream to disk (OPFS), and the file (${sizeMB} MB) exceeds the ${maxMB} MB in-memory limit.`
+          );
         }
+        this.memoryChunks = new Array(msg.totalChunks);
+      }
+
+      const self = this;
+      this.storage = {
+        async finalize() {
+          if (self.opfsActive && self.opfsWorker) {
+            await self._waitForOpfsWrites();
+            const fileObj = await new Promise((resolve, reject) => {
+              const timer = setTimeout(() => reject(new Error('OPFS worker finalize timed out')), 15000);
+              self._opfsFinalizeResolve = (file) => { clearTimeout(timer); resolve(file); };
+              self._opfsFinalizeReject = (err) => { clearTimeout(timer); reject(err); };
+              self.opfsWorker.postMessage({ type: 'finalize' });
+            });
+            try { self.opfsWorker.terminate(); } catch (_) { }
+            self.opfsWorker = null;
+            self.opfsActive = false;
+            return fileObj;
+          }
+          const chunks = self.memoryChunks || [];
+          for (let i = 0; i < chunks.length; i++) {
+            if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
+          }
+          const blob = new Blob(chunks, { type: msg.mimeType || 'application/octet-stream' });
+          self.memoryChunks = null;
+          return blob;
+        },
+        async purge() {
+          self._cleanupReceiverStorage(true);
+        },
+        async abort() {
+          self._cleanupReceiverStorage(true);
+        }
+      };
+    }
+
+    _attachOpfsWorker(worker) {
+      this.opfsWorker = worker;
+      this._opfsWritePending = 0;
+      worker.onmessage = (e) => {
+        const payload = e.data || {};
+        if (payload.type === 'write-ack') {
+          this._opfsWritePending = Math.max(0, this._opfsWritePending - 1);
+          if (this._opfsWritePending === 0) {
+            const waiters = this._opfsDrainedResolvers.splice(0);
+            waiters.forEach((resolve) => resolve());
+          }
+        } else if (payload.type === 'finalize-ack' && this._opfsFinalizeResolve) {
+          this._opfsFinalizeResolve(payload.buffer || payload.file);
+          this._opfsFinalizeResolve = null;
+          this._opfsFinalizeReject = null;
+        } else if (payload.type === 'error' && this._opfsFinalizeReject) {
+          this._opfsFinalizeReject(new Error(payload.message || 'OPFS worker error'));
+          this._opfsFinalizeResolve = null;
+          this._opfsFinalizeReject = null;
+        }
+      };
+    }
+
+    _waitForOpfsWrites() {
+      if (!this._opfsWritePending) return Promise.resolve();
+      return new Promise((resolve) => {
+        this._opfsDrainedResolvers.push(resolve);
+      });
+    }
+
+    async _processBinaryChunkFrame(frameBuffer) {
+      if (!this.incomingMeta || !this.aesKey) {
+        if (!this._earlyChunkQueue) this._earlyChunkQueue = [];
+        this._earlyChunkQueue.push(frameBuffer);
+        return;
+      }
+
+      let decryptedObj;
+      try {
+        decryptedObj = await this.decryptFrame(frameBuffer, this.aesKey);
+      } catch (decryptErr) {
+        this._handleTransferFailure(`Decryption failed — authentication or key mismatch: ${decryptErr.message}`, 'ERR_DECRYPT_FAILED');
+        return;
+      }
+
+      const { chunkIndex } = decryptedObj;
+      const chunkBytes = toOwnedBytes(decryptedObj.chunkData);
+      const meta = this.incomingMeta;
+
+      if (chunkIndex < 0 || chunkIndex >= meta.totalChunks) {
+        this._handleTransferFailure('Invalid chunk index received', 'ERR_INVALID_CHUNK_INDEX');
+        return;
+      }
+
+      if (chunkIndex !== this.receivedChunksCount) {
+        this._handleTransferFailure(
+          `Out-of-order chunk (got ${chunkIndex} when expecting ${this.receivedChunksCount})`,
+          'ERR_OUT_OF_ORDER_CHUNK'
+        );
+        return;
+      }
+
+      if (this.receivedChunkSet && this.receivedChunkSet.has(chunkIndex)) {
+        return;
+      }
+
+      if (this.receiverHasher) {
+        this.receiverHasher.update(chunkBytes);
+      }
+
+      if (this.opfsActive && this.opfsWorker) {
+        const offset = chunkIndex * meta.chunkSize;
+        this._opfsWritePending += 1;
+        const writeCopy = chunkBytes.slice();
+        this.opfsWorker.postMessage({ type: 'write', chunkIndex, offset, buffer: writeCopy.buffer }, [writeCopy.buffer]);
+      }
+      if (this.memoryChunks) {
+        this.memoryChunks[chunkIndex] = chunkBytes;
+      } else if (this.storage && typeof this.storage.writeChunk === 'function') {
+        await this.storage.writeChunk(chunkIndex, chunkIndex * meta.chunkSize, chunkBytes);
+      } else {
+        this.memoryChunks = new Array(meta.totalChunks);
+        this.memoryChunks[chunkIndex] = chunkBytes;
+      }
+
+      if (this.receivedChunkSet) this.receivedChunkSet.add(chunkIndex);
+      this.receivedChunksCount += 1;
+      this.receivedBytes += chunkBytes.byteLength;
+      this._armStallTimer();
+
+      const totalBytes = meta.size;
+      const now = Date.now();
+      const timeDiff = (now - this.lastProgressTime) / 1000;
+
+      if (timeDiff >= 0.5 || this.lastProgressTime === 0) {
+        const bytesDiff = this.receivedBytes - this.lastProgressBytes;
+        this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
+        this.lastProgressTime = now;
+        this.lastProgressBytes = this.receivedBytes;
+      }
+
+      if ((now - (this._lastRecvUiUpdate || 0)) > 100 || this.receivedChunksCount >= meta.totalChunks) {
+        this._lastRecvUiUpdate = now;
+        this._emitTransferProgress({
+          currentBytes: this.receivedBytes,
+          currentTotal: totalBytes,
+          role: 'receiver'
+        });
+      }
+
+      await this._maybeFinalizeReceiver();
+    }
+
+    async _maybeFinalizeReceiver() {
+      const meta = this.incomingMeta;
+      if (!meta || this.finishStarted) return;
+      const expectedHash = this.senderFinalHash || meta.hash;
+      if (this.receivedChunksCount >= meta.totalChunks && expectedHash) {
+        this.finishStarted = true;
+        await this._finalizeReceiverTransfer();
       }
     }
 
     /**
-     * Finalize received file: extract File/Blob, compute off-thread SHA-256, verify integrity
+     * Finalize received file: extract File/Blob, verify SHA-256, ack sender
      */
     async _finalizeReceiverTransfer() {
       const meta = this.incomingMeta;
       this.incomingMeta = null;
+      this._clearStallTimer();
 
       try {
-        let fileObj;
-        if (this.opfsActive && this.opfsWorker) {
-          fileObj = await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => reject(new Error('OPFS worker finalize timed out')), 5000);
-            this.opfsWorker.onmessage = (e) => {
-              if (e.data?.type === 'finalize-ack') {
-                clearTimeout(timer);
-                resolve(e.data.file);
-              } else if (e.data?.type === 'error') {
-                clearTimeout(timer);
-                reject(new Error(e.data.message));
-              }
-            };
+        let source;
+        const memoryReady = Array.isArray(this.memoryChunks) &&
+          this.memoryChunks.length === (meta.totalChunks || 0) &&
+          this.memoryChunks.every(Boolean);
+
+        if (memoryReady) {
+          source = this.memoryChunks;
+        } else if (this.storage && typeof this.storage.finalize === 'function') {
+          source = await this.storage.finalize();
+        } else if (this.opfsActive && this.opfsWorker) {
+          await this._waitForOpfsWrites();
+          source = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('OPFS worker finalize timed out')), 15000);
+            this._opfsFinalizeResolve = (file) => { clearTimeout(timer); resolve(file); };
+            this._opfsFinalizeReject = (err) => { clearTimeout(timer); reject(err); };
             this.opfsWorker.postMessage({ type: 'finalize' });
           });
           try { this.opfsWorker.terminate(); } catch (_) { }
           this.opfsWorker = null;
           this.opfsActive = false;
         } else {
-          const chunks = this.memoryChunks || [];
-          for (let i = 0; i < chunks.length; i++) {
-            if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
-          }
-          fileObj = new Blob(chunks, { type: meta.mimeType || 'application/octet-stream' });
-          this.memoryChunks = null;
+          throw new Error('Receiver storage is empty');
         }
 
-        // SHA-256 Integrity Verification
+        const fileObj = await materializeDownloadFile(source, meta);
+        this.memoryChunks = null;
+
+        if (typeof meta.size === 'number' && fileObj.size !== meta.size) {
+          throw new Error(`Received file size mismatch (expected ${meta.size}, got ${fileObj.size})`);
+        }
+
         this.onStatusChange('Verifying SHA-256 file integrity checksum…', 'info');
-        const computedHash = await this._computeHash(fileObj);
-
-        if (computedHash !== meta.hash) {
-          throw new Error(`SHA-256 checksum mismatch (Expected ${meta.hash.slice(0, 8)}…, got ${computedHash.slice(0, 8)}…)`);
+        let computedHash;
+        if (this.receiverHasher && this.receivedChunksCount >= (meta.totalChunks || 0) && this.receiverHasher.totalBytes === meta.size) {
+          computedHash = this.receiverHasher.digestHex();
+        } else {
+          computedHash = await this._computeHash(fileObj);
         }
 
-        // Verification successful -> notify sender and fire onFileComplete
+        const expectedHash = this.senderFinalHash || meta.hash;
+        if (!expectedHash || computedHash !== expectedHash) {
+          throw new Error(
+            `SHA-256 checksum mismatch (Expected ${(expectedHash || 'none').slice(0, 8)}…, got ${computedHash.slice(0, 8)}…)`
+          );
+        }
+
+        const batchSnap = this._getBatchSnapshot();
+        const moreRemaining = Boolean(
+          this._incomingBatch && this._incomingBatch.index < this._incomingBatch.totalFiles - 1
+        );
+
         this.isTransferring = false;
-        this._setState('completed');
-        this.onStatusChange(`File "${meta.name}" received & verified successfully! 🎉`, 'success');
-        this.onFileComplete(fileObj, meta);
-
+        this.onFileComplete(fileObj, {
+          ...meta,
+          fileIndex: batchSnap.fileIndex,
+          fileCount: batchSnap.fileCount,
+          moreRemaining
+        });
         this._sendControlMessage({ type: 'ack-complete', hash: computedHash });
+        this.storage = null;
+        this.receiverHasher = null;
 
+        if (moreRemaining) {
+          this._incomingBatch.completedBytes += meta.size || 0;
+          this._incomingBatch.index += 1;
+          this._prepareReceiverForNextFile();
+          this._setState('transferring');
+          this.onStatusChange(
+            `File ${batchSnap.fileIndex + 1}/${batchSnap.fileCount} received. Waiting for next file…`,
+            'success'
+          );
+          return;
+        }
+
+        this._incomingBatch = null;
+        this._setState('completed');
+        this.onStatusChange(
+          batchSnap.fileCount > 1
+            ? `All ${batchSnap.fileCount} files received & verified! 🎉`
+            : `File "${meta.name}" received & verified successfully! 🎉`,
+          'success'
+        );
       } catch (err) {
-        this._cleanupReceiverStorage(true);
+        if (this.storage && typeof this.storage.purge === 'function') {
+          try { await this.storage.purge(); } catch (_) { }
+        } else {
+          this._cleanupReceiverStorage(true);
+        }
+        this.storage = null;
         this._handleTransferFailure(`Transfer verification failed: ${err.message}`, 'ERR_INTEGRITY_FAILED');
       }
     }
 
     _cleanupReceiverStorage(deleteFile = false) {
       this.memoryChunks = null;
+      this._receiverReady = false;
+      this.receivedChunkSet = null;
       if (this.opfsWorker) {
         if (deleteFile) {
           try { this.opfsWorker.postMessage({ type: 'abort' }); } catch (_) { }
@@ -1081,11 +1678,264 @@
       this.opfsActive = false;
     }
 
+    async _handleResumeRequest(msg) {
+      const api = getManifestApi();
+      if (!api || typeof api.getManifest !== 'function') {
+        this._sendControlMessage({ type: 'resume-response', ok: false });
+        return;
+      }
+      const manifest = await api.getManifest(msg.transferId);
+      if (manifest && manifest.resumeToken && manifest.resumeToken === msg.resumeToken) {
+        this._sendControlMessage({
+          type: 'resume-response',
+          ok: true,
+          lastContiguousChunk: manifest.lastContiguousChunk
+        });
+      } else {
+        this._sendControlMessage({ type: 'resume-response', ok: false });
+      }
+    }
+
+    _waitForMetadataAck(timeoutMs = METADATA_ACK_TIMEOUT_MS) {
+      if (this._metadataAckReceived) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        this._metadataAckResolve = resolve;
+        this._metadataAckReject = reject;
+        this._metadataAckTimer = setTimeout(() => {
+          this._metadataAckTimer = null;
+          this._metadataAckResolve = null;
+          this._metadataAckReject = null;
+          reject(new Error('metadata-ack timed out'));
+        }, timeoutMs);
+      });
+    }
+
+    _resolveMetadataAck() {
+      this._metadataAckReceived = true;
+      if (this._metadataAckTimer) {
+        clearTimeout(this._metadataAckTimer);
+        this._metadataAckTimer = null;
+      }
+      const resolve = this._metadataAckResolve;
+      this._metadataAckResolve = null;
+      this._metadataAckReject = null;
+      if (resolve) resolve();
+    }
+
+    _rejectMetadataAck(err) {
+      if (this._metadataAckTimer) {
+        clearTimeout(this._metadataAckTimer);
+        this._metadataAckTimer = null;
+      }
+      const reject = this._metadataAckReject;
+      this._metadataAckResolve = null;
+      this._metadataAckReject = null;
+      if (reject) reject(err);
+    }
+
+    _getSafeChunkSize() {
+      let maxMsg = 65536;
+      if (this.pc && this.pc.sctp && this.pc.sctp.maxMessageSize) {
+        maxMsg = this.pc.sctp.maxMessageSize;
+      }
+      if (this.dataChannel && this.dataChannel.maxMessageSize) {
+        maxMsg = Math.min(maxMsg, this.dataChannel.maxMessageSize) || maxMsg;
+      }
+      if (!Number.isFinite(maxMsg) || maxMsg <= FRAME_OVERHEAD) {
+        return DEFAULT_CHUNK_SIZE;
+      }
+      const usable = Math.max(16 * 1024, maxMsg - FRAME_OVERHEAD);
+      return Math.min(MAX_CHUNK_SIZE, usable);
+    }
+
+    _scheduleIceRecovery() {
+      this._clearIceReconnectTimer();
+      this._iceReconnectTimer = setTimeout(() => {
+        this._iceReconnectTimer = null;
+        if (!this.pc) return;
+        const ice = this.pc.iceConnectionState;
+        if (ice === 'disconnected' || ice === 'failed') {
+          this._attemptIceRestart();
+        }
+      }, ICE_RECONNECT_TIMEOUT_MS);
+      if (this._iceReconnectTimer && typeof this._iceReconnectTimer.unref === 'function') {
+        this._iceReconnectTimer.unref();
+      }
+    }
+
+    _scheduleIceRestart() {
+      this._scheduleIceRecovery();
+    }
+
+    _clearIceReconnectTimer() {
+      if (this._iceReconnectTimer) {
+        clearTimeout(this._iceReconnectTimer);
+        this._iceReconnectTimer = null;
+      }
+      if (this._iceDisconnectTimer) {
+        clearTimeout(this._iceDisconnectTimer);
+        this._iceDisconnectTimer = null;
+      }
+    }
+
+    _clearIceDisconnectTimer() {
+      this._clearIceReconnectTimer();
+    }
+
+    async _attemptIceRestart() {
+      if (!this.pc || this.role !== 'initiator') return;
+      if (this._iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) return;
+      this._iceRestartAttempts += 1;
+      this._isIceRestarting = true;
+      try {
+        this.onStatusChange('Reconnecting P2P link…', 'warning');
+        if (typeof this.pc.restartIce === 'function') {
+          this.pc.restartIce();
+        }
+        const offer = await this.pc.createOffer({ iceRestart: true });
+        await this.pc.setLocalDescription(offer);
+        this._sendSignaling({ type: 'offer', offer: this.pc.localDescription });
+      } catch (err) {
+        this._isIceRestarting = false;
+        console.warn('[WebRTC Engine] ICE restart failed', err);
+      }
+    }
+
+    async _tryIceRestart() {
+      return this._attemptIceRestart();
+    }
+
+    _armStallTimer() {
+      this._clearStallTimer();
+      this._stallTimer = setTimeout(() => {
+        if (this.isTransferring && this.transferState === 'transferring') {
+          this._handleTransferFailure('Transfer stalled — no data received for 30 seconds.', 'ERR_TRANSFER_STALL');
+        }
+      }, STALL_TIMEOUT_MS);
+      if (this._stallTimer && typeof this._stallTimer.unref === 'function') {
+        this._stallTimer.unref();
+      }
+    }
+
+    _clearStallTimer() {
+      if (this._stallTimer) {
+        clearTimeout(this._stallTimer);
+        this._stallTimer = null;
+      }
+    }
+
+    _normalizeFileList(fileOrFiles) {
+      if (!fileOrFiles) return [];
+      if (typeof FileList !== 'undefined' && fileOrFiles instanceof FileList) {
+        return Array.from(fileOrFiles);
+      }
+      if (Array.isArray(fileOrFiles)) return fileOrFiles.filter(Boolean);
+      return [fileOrFiles];
+    }
+
+    _getBatchSnapshot() {
+      if (this._batch) {
+        return {
+          fileIndex: this._batch.index,
+          fileCount: this._batch.files.length,
+          completedBytes: this._batch.completedBytes,
+          totalBytes: this._batch.totalBytes
+        };
+      }
+      if (this._incomingBatch) {
+        return {
+          fileIndex: this._incomingBatch.index,
+          fileCount: this._incomingBatch.totalFiles,
+          completedBytes: this._incomingBatch.completedBytes,
+          totalBytes: this._incomingBatch.totalBytes
+        };
+      }
+      return { fileIndex: 0, fileCount: 1, completedBytes: 0, totalBytes: 0 };
+    }
+
+    _emitTransferProgress({ currentBytes, currentTotal, role }) {
+      const batch = this._getBatchSnapshot();
+      const transferredBytes = (batch.totalBytes ? batch.completedBytes : 0) + currentBytes;
+      const totalBytes = batch.totalBytes || currentTotal || 0;
+      const fileName = (this.currentFile && this.currentFile.name) || (this.incomingMeta && this.incomingMeta.name) || '';
+      this.onProgress({
+        percent: totalBytes > 0 ? Math.min(100, (transferredBytes / totalBytes) * 100) : 0,
+        transferredBytes,
+        totalBytes,
+        currentFileBytes: currentBytes,
+        currentFileTotal: currentTotal,
+        fileIndex: batch.fileIndex,
+        fileCount: batch.fileCount,
+        fileName,
+        speedBps: this.currentSpeedBps,
+        role
+      });
+    }
+
+    _prepareReceiverForNextFile() {
+      this.incomingMeta = null;
+      this.finishStarted = false;
+      this._receiverReady = false;
+      this.aesKey = null;
+      this.salt = null;
+      this.senderFinalHash = null;
+      this.receivedChunksCount = 0;
+      this.receivedBytes = 0;
+      this.memoryChunks = null;
+      this.receivedChunkSet = null;
+      this._earlyChunkQueue = [];
+      this.storage = null;
+      this.receiverHasher = null;
+      this.isTransferring = false;
+    }
+
+    /**
+     * Send one or more files over the open DataChannel.
+     * Multiple files share the same pairing session and are sent sequentially.
+     * @param {File|Blob|File[]|FileList} fileOrFiles
+     */
+    async sendFiles(fileOrFiles) {
+      const files = this._normalizeFileList(fileOrFiles).slice(0, MAX_BATCH_FILES);
+      if (!files.length) {
+        this.onError('No file selected for transfer.', 'ERR_NO_FILE');
+        return;
+      }
+      this._batch = {
+        files,
+        index: 0,
+        totalBytes: files.reduce((sum, file) => sum + (file.size || 0), 0),
+        completedBytes: 0
+      };
+      if (files.length > 1) {
+        this._sendControlMessage({
+          type: 'batch-manifest',
+          v: 3,
+          totalFiles: files.length,
+          totalBytes: this._batch.totalBytes,
+          files: files.map((file, index) => ({
+            index,
+            name: file.name,
+            size: file.size,
+            mimeType: file.type || 'application/octet-stream'
+          }))
+        });
+        this.onStatusChange(
+          `Starting batch of ${files.length} files (${this._formatBytes(this._batch.totalBytes)})…`,
+          'info'
+        );
+      }
+      return this.sendFile(files[0]);
+    }
+
     /**
      * Send File over DataChannel with AES-256-GCM E2EE & Event-Driven Backpressure
-     * @param {File|Blob} file 
+     * @param {File|Blob|File[]|FileList} file
      */
     async sendFile(file) {
+      if (file && ((typeof FileList !== 'undefined' && file instanceof FileList) || Array.isArray(file))) {
+        return this.sendFiles(file);
+      }
+
       if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
         this.onError('P2P DataChannel is not open. Connect to peer first.', 'ERR_NOT_CONNECTED');
         return;
@@ -1103,36 +1953,34 @@
 
       this.currentFile = file;
       this.isTransferring = true;
+      this._metadataAckReceived = false;
       this._setState('transferring');
-      const chunkSize = DEFAULT_CHUNK_SIZE;
-      const totalChunks = Math.ceil(file.size / chunkSize);
+      this._armStallTimer();
 
-      // Generate 16-byte random salt for PBKDF2
+      const chunkSize = this._getSafeChunkSize();
+      this._negotiatedChunkSize = chunkSize;
+      const totalChunks = file.size === 0 ? 0 : Math.ceil(file.size / chunkSize);
+
       const cryptoObj = getCrypto();
       this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
 
-      // Derive AES key (10k PBKDF2 iterations — ~10× faster than 100k, still OWASP-compliant)
       try {
         this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+        await this._initCryptoWorkers(this.sessionCode, this.salt);
       } catch (keyErr) {
         this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
         return;
       }
 
-      // Compute SHA-256 hash of plaintext file (off-thread via worker)
-      this.onStatusChange(`Calculating SHA-256 hash for "${file.name}"…`, 'info');
-      let fileHash = '';
-      try {
-        fileHash = await this._computeHash(file);
-      } catch (hashErr) {
-        this._handleTransferFailure(`SHA-256 calculation failed: ${hashErr.message}`, 'ERR_HASH_FAILED');
-        return;
-      }
+      // Hash in parallel with the send — never block the first byte on a full-file digest
+      const hashPromise = this._computeHash(file).catch((hashErr) => {
+        throw new Error(`SHA-256 calculation failed: ${hashErr.message}`);
+      });
 
-      // Send Metadata Header
+      const batchSnap = this._getBatchSnapshot();
       const metadata = {
         type: 'metadata',
-        v: 2,
+        v: 3,
         cipher: 'AES-256-GCM',
         name: file.name,
         size: file.size,
@@ -1140,16 +1988,21 @@
         chunkSize: chunkSize,
         totalChunks: totalChunks,
         salt: bytesToBase64(this.salt),
-        hash: fileHash
+        fileIndex: batchSnap.fileIndex,
+        fileCount: batchSnap.fileCount,
+        batchTotalBytes: batchSnap.totalBytes
       };
 
       this.onStatusChange(`Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
       this._sendControlMessage(metadata);
 
-      // ── Pipelined send loop ──────────────────────────────────────────────────
-      // Strategy: while sending chunk N, we read+encrypt chunk N+1 in parallel.
-      // This hides the async crypto latency behind the network send, maximising
-      // DataChannel utilisation without ever voluntarily yielding to rAF.
+      try {
+        await this._waitForMetadataAck(METADATA_ACK_TIMEOUT_MS);
+      } catch (ackErr) {
+        this._handleTransferFailure(`Receiver did not become ready: ${ackErr.message}`, 'ERR_METADATA_ACK_TIMEOUT');
+        return;
+      }
+
       let offset = 0;
       let chunkIndex = 0;
       this.lastProgressTime = Date.now();
@@ -1157,30 +2010,36 @@
       this.currentSpeedBps = 0;
       this._lastSendUiUpdate = 0;
 
-      // Prefetch the very first chunk before entering the loop
-      let prefetchPromise = this._readAndEncryptChunk(file, offset, chunkSize, chunkIndex);
+      const inflight = [];
+      const enqueueEncrypt = () => {
+        if (offset >= file.size || inflight.length >= this._getPipelineDepth() || !this.isTransferring) return;
+        const thisOffset = offset;
+        const thisIndex = chunkIndex;
+        const rawChunkSize = Math.min(chunkSize, file.size - thisOffset);
+        offset += rawChunkSize;
+        chunkIndex += 1;
+        inflight.push(
+          this._readAndEncryptChunk(file, thisOffset, rawChunkSize, thisIndex).then((frame) => ({
+            frame,
+            rawChunkSize,
+            index: thisIndex
+          }))
+        );
+      };
 
-      while (offset < file.size && this.isTransferring) {
-        // Wait for the pre-fetched encrypted frame
-        let encryptedFrame;
+      for (let i = 0; i < this._getPipelineDepth(); i++) enqueueEncrypt();
+
+      while (inflight.length > 0 && this.isTransferring) {
+        let packet;
         try {
-          encryptedFrame = await prefetchPromise;
+          packet = await inflight.shift();
         } catch (encErr) {
-          this._handleTransferFailure(`Failed to encrypt chunk ${chunkIndex}: ${encErr.message}`, 'ERR_ENCRYPT_CHUNK');
+          this._handleTransferFailure(`Failed to encrypt chunk: ${encErr.message}`, 'ERR_ENCRYPT_CHUNK');
           return;
         }
 
-        const frameByteLength = encryptedFrame.byteLength;
-        const rawChunkSize = Math.min(chunkSize, file.size - offset);
+        enqueueEncrypt();
 
-        // Kick off the NEXT chunk's read+encrypt immediately (pipeline)
-        const nextOffset = offset + rawChunkSize;
-        const nextIndex = chunkIndex + 1;
-        if (nextOffset < file.size && this.isTransferring) {
-          prefetchPromise = this._readAndEncryptChunk(file, nextOffset, chunkSize, nextIndex);
-        }
-
-        // Backpressure check — pause only when buffer is genuinely full
         if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
           try {
             await this._waitForBufferLow();
@@ -1189,81 +2048,95 @@
           }
         }
 
-        // Send the encrypted frame
         try {
-          this.dataChannel.send(encryptedFrame);
+          this.dataChannel.send(packet.frame);
         } catch (err) {
           this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
           return;
         }
 
-        offset += rawChunkSize;
-        chunkIndex++;
+        this._armStallTimer();
 
-        // Progress reporting (throttled to 100 ms)
+        const sentBytes = Math.min(file.size, packet.index * chunkSize + packet.rawChunkSize);
         const now = Date.now();
         const timeDiff = (now - this.lastProgressTime) / 1000;
         if (timeDiff >= 0.5) {
-          this.currentSpeedBps = timeDiff > 0 ? ((offset - this.lastProgressBytes) / timeDiff) : 0;
+          this.currentSpeedBps = timeDiff > 0 ? ((sentBytes - this.lastProgressBytes) / timeDiff) : 0;
           this.lastProgressTime = now;
-          this.lastProgressBytes = offset;
+          this.lastProgressBytes = sentBytes;
         }
 
-        const isComplete = offset >= file.size;
-        if (isComplete || (now - this._lastSendUiUpdate) > 100) {
+        if (sentBytes >= file.size || (now - this._lastSendUiUpdate) > 100) {
           this._lastSendUiUpdate = now;
-          this.onProgress({
-            percent: Math.min(100, (offset / file.size) * 100).toFixed(1),
-            transferredBytes: offset,
-            totalBytes: file.size,
-            speedBps: this.currentSpeedBps,
+          this._emitTransferProgress({
+            currentBytes: sentBytes,
+            currentTotal: file.size,
             role: 'sender'
           });
         }
-        // No rAF yield here — we let the event loop breathe only during the
-        // await on the prefetch promise above, which is already async.
       }
+
+      if (!this.isTransferring) return;
+
+      let fileHash;
+      try {
+        fileHash = await hashPromise;
+      } catch (hashErr) {
+        this._handleTransferFailure(hashErr.message, 'ERR_HASH_FAILED');
+        return;
+      }
+      this._sendControlMessage({ type: 'transfer-complete', hash: fileHash });
+      this.onStatusChange('All chunks sent. Waiting for receiver verification…', 'info');
     }
 
     /**
      * Read one file slice and encrypt it. Used by the pipelined send loop so
      * we can overlap crypto with the previous chunk's network send.
-     * @returns {Promise<ArrayBuffer>} Encrypted frame ready to pass to dataChannel.send()
      */
     async _readAndEncryptChunk(file, offset, chunkSize, chunkIndex) {
       const slice = file.slice(offset, offset + chunkSize);
       const chunkBuffer = await slice.arrayBuffer();
       const encryptedFrame = await this.encryptChunk(chunkBuffer, chunkIndex, this.aesKey);
-      // Return the underlying ArrayBuffer (no extra copy)
-      return encryptedFrame.buffer;
+      return frameToArrayBuffer(encryptedFrame);
     }
 
     /**
-     * Event-driven Backpressure wait. Resolves ONLY when bufferedAmount <= BUFFER_LOW_WATERMARK.
-     * Rejects gracefully if DataChannel closes or transfer is cancelled.
+     * Wait until DataChannel bufferedAmount drops to the low watermark.
+     * Does not fake-unblock on a short timer — that caused send overflow and stalls.
      */
     _waitForBufferLow() {
       if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK || this.transferState === 'completed') {
         return Promise.resolve();
       }
-      return new Promise((resolve) => {
-        // Pure event-driven — no polling timer.
-        // We only add a single 500 ms safety-net timeout in case the browser
-        // doesn't fire bufferedamountlow (e.g. some mobile Safari versions).
-        let safetyTimer = null;
+      return new Promise((resolve, reject) => {
+        let pollTimer = null;
+        let settled = false;
 
-        const done = () => {
-          if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+        const cleanup = () => {
+          if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
           if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
-          resolve();
+        };
+
+        const finish = (fn, value) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          fn(value);
         };
 
         if (this.dataChannel) {
-          this.dataChannel.onbufferedamountlow = done;
+          this.dataChannel.onbufferedamountlow = () => finish(resolve);
         }
 
-        // Safety-net: if the event never fires, unblock after 500 ms
-        safetyTimer = setTimeout(done, 500);
+        pollTimer = setInterval(() => {
+          if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            finish(reject, new Error('DataChannel closed during backpressure wait'));
+            return;
+          }
+          if (this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK || this.transferState === 'completed' || !this.isTransferring) {
+            finish(resolve);
+          }
+        }, 40);
       });
     }
 
@@ -1284,6 +2157,7 @@
       }
       this._cleanupReceiverStorage(true);
       this.isTransferring = false;
+      this._clearStallTimer();
       this._setState('cancelled');
       this.onStatusChange('Transfer cancelled', 'warning');
     }
@@ -1299,6 +2173,10 @@
     _handleTransferFailure(errorMessage, errorCode) {
       if (this.transferState === 'completed') return;
       this.isTransferring = false;
+      this._batch = null;
+      this._incomingBatch = null;
+      this._clearStallTimer();
+      this._rejectMetadataAck(new Error(errorMessage));
       this._setState('failed');
       this.onError(errorMessage, errorCode);
     }
@@ -1325,8 +2203,12 @@
 
     disconnect() {
       this.isTransferring = false;
+      this._clearStallTimer();
+      this._clearIceReconnectTimer();
+      this._isIceRestarting = false;
+      this._rejectMetadataAck(new Error('Disconnected'));
       this._cleanupReceiverStorage(true);
-      this._setState('idle');
+      this._setState('idle', { force: true });
 
       if (this.dataChannel) {
         try { this.dataChannel.close(); } catch (e) { }
@@ -1352,6 +2234,10 @@
       this.pendingIceCandidates = [];
       this.aesKey = null;
       this.salt = null;
+      this.currentFile = null;
+      this._batch = null;
+      this._incomingBatch = null;
+      this._teardownCryptoWorkers();
     }
   }
 

@@ -24,9 +24,13 @@ export default function Navbar({ onToggleZen }) {
         <div className="glass-logo-box">
           <ArrowUpDown size={18} />
         </div>
-        <h1 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-title)', letterSpacing: '-0.02em', margin: 0 }}>
+        <a
+          href="/"
+          aria-label="FluxTransfer home"
+          style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-title)', letterSpacing: '-0.02em', margin: 0, textDecoration: 'none' }}
+        >
           FluxTransfer
-        </h1>
+        </a>
       </div>
 
       {/* Right Action Icons: Apple Liquid Theme Toggle */}

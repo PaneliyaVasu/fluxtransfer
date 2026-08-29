@@ -35,14 +35,39 @@ const MIME = {
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
   '.txt': 'text/plain',
-  '.xml': 'text/xml'
+  '.xml': 'application/xml'
 };
+
+function publicSiteUrl(req) {
+  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || 'localhost').split(',')[0].trim();
+  return `${proto}://${host}`;
+}
 
 function serveStatic(req, res) {
   // CORS headers for signaling health check
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   let reqPath = req.url.split('?')[0].split('#')[0];
+  if (/^\/r\/[0-9]{6}\/?$/.test(reqPath)) {
+    reqPath = '/index.html';
+  }
+
+  if (reqPath === '/robots.txt') {
+    const sitemap = `${publicSiteUrl(req)}/sitemap.xml`;
+    const body = `User-agent: *\nAllow: /\n\nSitemap: ${sitemap}\n`;
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+    res.end(body);
+    return;
+  }
+
+  if (reqPath === '/sitemap.xml') {
+    const origin = publicSiteUrl(req);
+    const body = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>${origin}/</loc>\n    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`;
+    res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+    res.end(body);
+    return;
+  }
 
   // SPA-style routing: trailing-slash pages load their index.html
   if (reqPath.endsWith('/') && reqPath !== '/') {
@@ -165,6 +190,11 @@ const wss = new WebSocketServer({
 });
 
 server.on('upgrade', (request, socket, head) => {
+  const pathname = (request.url || '/').split('?')[0];
+  if (pathname !== '/' && pathname !== '/ws') {
+    socket.destroy();
+    return;
+  }
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit('connection', ws, request);
   });

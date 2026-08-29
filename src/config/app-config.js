@@ -2,9 +2,9 @@
  * FluxTransfer — Centralized Application Configuration
  */
 
-const DEFAULT_CHUNK_SIZE = 256 * 1024; // 256 KB — 4× fewer crypto/send calls vs 64 KB
-const BUFFER_HIGH_WATERMARK = 2 * 1024 * 1024; // 2 MB — more reliable on mobile networks
-const BUFFER_LOW_WATERMARK = 512 * 1024;        // 512 KB low watermark
+const DEFAULT_CHUNK_SIZE = 64 * 1024; // Safe under conservative SCTP message limits; engine may raise after connect
+const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB
+const BUFFER_LOW_WATERMARK = 1 * 1024 * 1024;  // 1 MB
 const PBKDF2_ITERATIONS = 10000; // 10k — OWASP-compliant, 10× faster than 100k
 const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024; // 300 MB safe limit for non-OPFS memory fallback
 const METADATA_ACK_TIMEOUT_MS = 15000; // 15 seconds timeout waiting for receiver metadata-ack

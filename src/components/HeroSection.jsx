@@ -33,14 +33,11 @@ export default function HeroSection() {
             <ArrowUpDown className="hero-arrow-icon" size={22} />
           </div>
 
-          {/* Hero Headline */}
-          <h2 className="hero-title">
-            File Transfer
-          </h2>
-
-          {/* Hero Subtitle */}
+          <h1 className="hero-title">
+            Private file transfer
+          </h1>
           <p className="hero-subtitle">
-            Fast. Secure. Simple.
+            Fast. Secure. Simple. Send files between phones and computers in your browser.
           </p>
         </div>
 
