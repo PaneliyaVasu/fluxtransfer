@@ -135,13 +135,6 @@ class MemoryStorage extends BaseReceiverStorage {
   }
 
   async initialize(meta) {
-    if (meta.size > MAX_MEMORY_FALLBACK_SIZE) {
-      const maxMB = Math.round(MAX_MEMORY_FALLBACK_SIZE / (1024 * 1024));
-      const sizeMB = (meta.size / (1024 * 1024)).toFixed(1);
-      throw new Error(
-        `OPFS storage is unavailable in this browser environment, and file size (${sizeMB} MB) exceeds safe in-memory limit (${maxMB} MB). Please use a browser supporting OPFS over HTTPS.`
-      );
-    }
     this.meta = meta;
     this.chunks = new Array(meta.totalChunks);
     return true;

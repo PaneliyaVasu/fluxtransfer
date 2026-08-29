@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { installSoftwareCrypto } from '../utils/software-crypto.js';
 import FluxWebRTCEngine from '../engine/webrtc-engine.js';
 import { generateSessionCode, isValidSessionCode } from '../config/app-config.js';
+import { createZipArchive, suggestZipName } from '../utils/zip-files.js';
 
 if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   installSoftwareCrypto(globalThis);
@@ -42,9 +43,11 @@ export function useFluxTransfer() {
   const [transferredBytes, setTransferredBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState(0);
-  const [currentFileIndex, setCurrentFileIndex] = useState(0);
-  const [totalFiles, setTotalFiles] = useState(1);
   const [currentFileName, setCurrentFileName] = useState('');
+  const [packedFileCount, setPackedFileCount] = useState(1);
+  const [packedFiles, setPackedFiles] = useState([]);
+  const [isPacking, setIsPacking] = useState(false);
+  const [packProgress, setPackProgress] = useState(0);
   const [receivedFiles, setReceivedFiles] = useState([]);
   const [receivedFileBlob, setReceivedFileBlob] = useState(null);
   const [receivedFileUrl, setReceivedFileUrl] = useState(null);
@@ -53,6 +56,8 @@ export function useFluxTransfer() {
 
   const engineRef = useRef(null);
   const selectedFilesRef = useRef([]);
+  const packedFileRef = useRef(null);
+  const packPromiseRef = useRef(null);
   const wakeLockRef = useRef(null);
   const receivedUrlsRef = useRef([]);
 
@@ -122,19 +127,42 @@ export function useFluxTransfer() {
     });
 
     engine.on('dataChannelOpen', () => {
-      if (selectedFilesRef.current.length && !engine.isTransferring) {
-        engine.sendFiles(selectedFilesRef.current);
-      }
+      if (engine.isTransferring) return;
+      const startSend = async () => {
+        let files = selectedFilesRef.current;
+        if (!files.length && !packPromiseRef.current && !packedFileRef.current) return;
+        try {
+          if (packPromiseRef.current) {
+            const zip = await packPromiseRef.current;
+            if (!engine.dataChannel || engine.dataChannel.readyState !== 'open' || engine.isTransferring) {
+              return;
+            }
+            packedFileRef.current = zip;
+            files = [zip];
+          } else if (packedFileRef.current) {
+            files = [packedFileRef.current];
+          }
+          if (files.length) engine.sendFiles(files);
+        } catch (err) {
+          setErrorMessage(err?.message || 'Failed to prepare zip archive');
+        }
+      };
+      startSend();
     });
 
     engine.on('progress', (info) => {
       if (typeof info !== 'object') return;
       const percent = info.percent ?? info.percentage ?? 0;
+      if (info.phase === 'zip') {
+        setIsPacking(percent < 100);
+        setPackProgress(Math.round(percent));
+        if (info.fileName) setCurrentFileName(info.fileName);
+        return;
+      }
+      setIsPacking(false);
       setTransferProgress(Math.round(percent));
       setTransferredBytes(info.transferredBytes || 0);
       setTotalBytes(info.totalBytes || 0);
-      setCurrentFileIndex(info.fileIndex ?? 0);
-      setTotalFiles(info.fileCount || 1);
       if (info.fileName) setCurrentFileName(info.fileName);
       if (info.speedBps) {
         const speedMB = (info.speedBps / (1024 * 1024)).toFixed(2);
@@ -145,20 +173,15 @@ export function useFluxTransfer() {
     });
 
     engine.on('fileMetadata', (meta) => {
-      if (meta?.type === 'batch-manifest') {
-        setTotalFiles(meta.totalFiles || meta.files?.length || 1);
-        setTotalBytes(meta.totalBytes || 0);
-        setCurrentFileIndex(0);
-        return;
-      }
       if (meta?.name) setCurrentFileName(meta.name);
-      if (typeof meta?.fileIndex === 'number') setCurrentFileIndex(meta.fileIndex);
-      if (typeof meta?.fileCount === 'number') setTotalFiles(meta.fileCount);
+      if (typeof meta?.size === 'number') setTotalBytes(meta.size);
+      if (typeof meta?.packedFileCount === 'number') setPackedFileCount(meta.packedFileCount);
+      if (Array.isArray(meta?.packedFiles)) setPackedFiles(meta.packedFiles);
     });
 
-    engine.on('fileComplete', ({ blob, fileName, fileType, fileIndex, fileCount }) => {
-      if (typeof fileIndex === 'number') setCurrentFileIndex(fileIndex);
-      if (typeof fileCount === 'number') setTotalFiles(fileCount);
+    engine.on('fileComplete', ({ blob, fileName, fileType, packedFileCount: packedCount, packedFiles: packedList }) => {
+      if (typeof packedCount === 'number') setPackedFileCount(packedCount);
+      if (Array.isArray(packedList) && packedList.length) setPackedFiles(packedList);
 
       if (!blob) return;
 
@@ -194,13 +217,43 @@ export function useFluxTransfer() {
     const files = normalizeFiles(fileOrFiles);
     if (!files.length || !engineRef.current) return;
     selectedFilesRef.current = files;
+    packedFileRef.current = null;
+    packPromiseRef.current = null;
     setSelectedFiles(files);
-    setCurrentFileName(files[0].name);
-    setCurrentFileIndex(0);
-    setTotalFiles(files.length);
+    setPackedFileCount(files.length);
+    setPackedFiles(files.map((file) => ({ name: file.name, size: file.size || 0 })));
     setTotalBytes(files.reduce((sum, file) => sum + (file.size || 0), 0));
     setRole('sender');
     setErrorMessage('');
+
+    if (files.length > 1) {
+      const zipName = suggestZipName(files);
+      setCurrentFileName(zipName);
+      setIsPacking(true);
+      setPackProgress(0);
+      packPromiseRef.current = createZipArchive(files, {
+        onProgress: ({ percent, currentName }) => {
+          setPackProgress(Math.round(percent));
+          if (currentName) setCurrentFileName(percent >= 100 ? zipName : `Zipping ${currentName}`);
+        }
+      }).then((zip) => {
+        packedFileRef.current = zip;
+        selectedFilesRef.current = [zip];
+        setCurrentFileName(zip.name);
+        setTotalBytes(zip.size || 0);
+        setIsPacking(false);
+        setPackProgress(100);
+        return zip;
+      }).catch((err) => {
+        setIsPacking(false);
+        setErrorMessage(err.message || 'Failed to create zip archive');
+        throw err;
+      });
+    } else {
+      setCurrentFileName(files[0].name);
+      setIsPacking(false);
+      setPackProgress(0);
+    }
 
     const code = generateSessionCode(6);
     setPairingCode(code);
@@ -237,9 +290,13 @@ export function useFluxTransfer() {
     setTransferSpeed('0 MB/s');
     setTransferredBytes(0);
     setTotalBytes(0);
-    setCurrentFileIndex(0);
-    setTotalFiles(1);
     setCurrentFileName('');
+    setPackedFileCount(1);
+    setPackedFiles([]);
+    setIsPacking(false);
+    setPackProgress(0);
+    packedFileRef.current = null;
+    packPromiseRef.current = null;
     setReceivedFiles([]);
     setReceivedFileBlob(null);
     revokeAllFileUrls();
@@ -263,9 +320,11 @@ export function useFluxTransfer() {
     transferredBytes,
     totalBytes,
     etaSeconds,
-    currentFileIndex,
-    totalFiles,
     currentFileName,
+    packedFileCount,
+    packedFiles,
+    isPacking,
+    packProgress,
     receivedFiles,
     receivedFileBlob,
     receivedFileUrl,

@@ -14,6 +14,7 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 
@@ -147,6 +148,15 @@ function serveStatic(req, res) {
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   // Health check endpoint for uptime monitors
+  if (req.url === '/api/lan' || req.url === '/lan') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({
+      ips: getServerLanIps(),
+      port: PORT
+    }));
+    return;
+  }
+
   if (req.url === '/health' || req.url === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({
@@ -200,6 +210,63 @@ server.on('upgrade', (request, socket, head) => {
   });
 });
 
+function normalizeIp(value) {
+  if (!value || typeof value !== 'string') return '';
+  let ip = value.trim().replace(/^\[|\]$/g, '');
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  return ip;
+}
+
+function isPrivateIPv4(ip) {
+  const clean = normalizeIp(ip);
+  const parts = clean.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  if (parts[0] === 10) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  return false;
+}
+
+function getServerLanIps() {
+  const ips = [];
+  const ifaces = os.networkInterfaces();
+  for (const list of Object.values(ifaces)) {
+    for (const net of list || []) {
+      if (!net || net.internal) continue;
+      const family = net.family === 4 || net.family === 'IPv4';
+      if (family && isPrivateIPv4(net.address)) ips.push(normalizeIp(net.address));
+    }
+  }
+  return [...new Set(ips)];
+}
+
+function collectRequestLanHints(req) {
+  const hints = [];
+  const add = (value) => {
+    const ip = normalizeIp(String(value || '').split(',')[0]);
+    if (isPrivateIPv4(ip)) hints.push(ip);
+  };
+  if (req && req.socket) add(req.socket.remoteAddress);
+  if (req && req.headers) {
+    add(req.headers['x-forwarded-for']);
+    add(req.headers['x-real-ip']);
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(':')[0];
+    add(host);
+  }
+  return [...new Set(hints)];
+}
+
+function getRoomLanHints(roomCode, extra = []) {
+  const hints = [...getServerLanIps(), ...extra];
+  const room = rooms.get(roomCode);
+  if (room) {
+    for (const client of room) {
+      if (Array.isArray(client.lanHints)) hints.push(...client.lanHints);
+    }
+  }
+  return [...new Set(hints.filter(isPrivateIPv4))];
+}
+
 function send(ws, data) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(data));
@@ -238,6 +305,7 @@ function leaveRoom(ws) {
 wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.roomCode = null;
+  ws.lanHints = collectRequestLanHints(req);
   ws.msgCount = 0;
   ws.msgResetTime = Date.now() + 60000;
   const clientIp = (req.socket && req.socket.remoteAddress) || '127.0.0.1';
@@ -300,7 +368,12 @@ wss.on('connection', (ws, req) => {
           const targetRoom = rooms.get(cleanRoom);
 
           if (targetRoom.has(ws)) {
-            send(ws, { type: 'joined', room: cleanRoom, role: targetRoom.size === 1 ? 'initiator' : 'joiner' });
+            send(ws, {
+              type: 'joined',
+              room: cleanRoom,
+              role: targetRoom.size === 1 ? 'initiator' : 'joiner',
+              lanHints: getRoomLanHints(cleanRoom, ws.lanHints)
+            });
             return;
           }
 
@@ -313,16 +386,26 @@ wss.on('connection', (ws, req) => {
           ws.roomCode = cleanRoom;
 
           const isInitiator = targetRoom.size === 1;
+          const lanHints = getRoomLanHints(cleanRoom, ws.lanHints);
           send(ws, {
             type: 'joined',
             room: cleanRoom,
             role: isInitiator ? 'initiator' : 'joiner',
-            peerPresent: targetRoom.size === 2
+            peerPresent: targetRoom.size === 2,
+            lanHints
           });
 
           if (targetRoom.size === 2) {
-            relayToPeer(cleanRoom, ws, { type: 'peer-joined' });
+            relayToPeer(cleanRoom, ws, { type: 'peer-joined', lanHints });
           }
+          break;
+        }
+
+        case 'lan-hint': {
+          if (!ws.roomCode) return;
+          const ips = Array.isArray(message.ips) ? message.ips.map(normalizeIp).filter(isPrivateIPv4) : [];
+          ws.lanHints = [...new Set([...(ws.lanHints || []), ...ips])];
+          relayToPeer(ws.roomCode, ws, { type: 'lan-hint', ips: getRoomLanHints(ws.roomCode) });
           break;
         }
 

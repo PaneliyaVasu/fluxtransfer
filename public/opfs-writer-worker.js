@@ -48,8 +48,7 @@ self.onmessage = async function (e) {
       }
 
       const fileObj = await fileHandle.getFile();
-      const buffer = await fileObj.arrayBuffer();
-      self.postMessage({ type: 'finalize-ack', id, buffer, name: fileName }, [buffer]);
+      self.postMessage({ type: 'finalize-ack', id, file: fileObj, name: fileName });
 
     } else if (type === 'abort') {
       if (accessHandle) {

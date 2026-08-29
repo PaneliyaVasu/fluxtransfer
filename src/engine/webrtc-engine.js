@@ -1,4 +1,5 @@
 import { createSoftwareCrypto } from '../utils/software-crypto.js';
+import { createZipArchive } from '../utils/zip-files.js';
 
 if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   globalThis.FluxSoftwareCrypto = createSoftwareCrypto();
@@ -31,7 +32,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   const PBKDF2_ITERATIONS = 10000;
   const METADATA_ACK_TIMEOUT_MS = 15000;
   const MAX_EARLY_CHUNK_QUEUE_SIZE = 100;
-  const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024;
+  const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024; // Prefer disk-backed receive above this; not a hard reject
   const ICE_RECONNECT_TIMEOUT_MS = 5000;
   const MAX_ICE_RESTART_ATTEMPTS = 2;
   const STALL_TIMEOUT_MS = 30000;
@@ -79,6 +80,74 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     },
     { urls: 'stun:stun.cloudflare.com:3478' }
   ];
+
+  function normalizeIp(value) {
+    if (!value || typeof value !== 'string') return '';
+    let ip = value.trim().replace(/^\[|\]$/g, '');
+    if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+    return ip;
+  }
+
+  function isPrivateIPv4(ip) {
+    const clean = normalizeIp(ip);
+    const parts = clean.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+    if (parts[0] === 10) return true;
+    if (parts[0] === 192 && parts[1] === 168) return true;
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+    return false;
+  }
+
+  function getPageLanHints() {
+    const hints = [];
+    if (typeof window === 'undefined' || !window.location) return hints;
+    const host = normalizeIp(window.location.hostname);
+    if (isPrivateIPv4(host)) hints.push(host);
+    return hints;
+  }
+
+  function getSignalingUrls() {
+    if (typeof window === 'undefined' || !window.location) {
+      return ['ws://localhost:8080'];
+    }
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SIGNALING_URL) {
+      return [import.meta.env.VITE_SIGNALING_URL];
+    }
+    const { protocol, host, hostname } = window.location;
+    if (protocol === 'https:') {
+      return [`wss://${host}/ws`];
+    }
+    const urls = [];
+    const add = (url) => {
+      if (url && !urls.includes(url)) urls.push(url);
+    };
+    if (isPrivateIPv4(hostname)) {
+      add(`ws://${host}/ws`);
+      add(`ws://${hostname}:8080`);
+      add(`ws://${hostname}:8080/ws`);
+    } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      add(`ws://${host}/ws`);
+      add('ws://127.0.0.1:8080');
+      add('ws://localhost:8080');
+    } else {
+      add(`ws://${host}/ws`);
+      add(`ws://${hostname}:8080`);
+    }
+    return urls;
+  }
+
+  function rewriteHostCandidate(candidateStr, lanIps) {
+    if (!candidateStr || !/typ host\b/i.test(candidateStr)) return [];
+    const match = candidateStr.match(/^(candidate:\S+\s+\d+\s+\S+\s+\d+\s+)(\S+)(\s+\d+\s+typ\s+host\b.*)$/i);
+    if (!match) return [];
+    const extras = [];
+    for (const ip of lanIps) {
+      if (ip && ip !== match[2] && isPrivateIPv4(ip)) {
+        extras.push(`${match[1]}${ip}${match[3]}`);
+      }
+    }
+    return extras;
+  }
 
   function hasSubtleApi(cryptoObj) {
     return !!(
@@ -207,6 +276,73 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     return window.isSecureContext === true;
   }
 
+  const IDB_RECEIVE_DB = 'flux_receive_parts';
+  const IDB_RECEIVE_STORE = 'parts';
+  const IDB_FLUSH_BYTES = 8 * 1024 * 1024;
+
+  function getIndexedDB() {
+    if (typeof indexedDB !== 'undefined') return indexedDB;
+    if (typeof globalThis !== 'undefined' && globalThis.indexedDB) return globalThis.indexedDB;
+    return null;
+  }
+
+  function openReceiveIdb() {
+    return new Promise((resolve) => {
+      const idb = getIndexedDB();
+      if (!idb) {
+        resolve(null);
+        return;
+      }
+      try {
+        const req = idb.open(IDB_RECEIVE_DB, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(IDB_RECEIVE_STORE)) {
+            db.createObjectStore(IDB_RECEIVE_STORE);
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+      } catch (_) {
+        resolve(null);
+      }
+    });
+  }
+
+  function idbRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('IndexedDB request failed'));
+    });
+  }
+
+  async function clearReceiveIdb(db) {
+    const tx = db.transaction(IDB_RECEIVE_STORE, 'readwrite');
+    tx.objectStore(IDB_RECEIVE_STORE).clear();
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('IndexedDB clear failed'));
+    });
+  }
+
+  function deleteReceiveIdb() {
+    return new Promise((resolve) => {
+      const idb = getIndexedDB();
+      if (!idb) {
+        resolve();
+        return;
+      }
+      try {
+        const req = idb.deleteDatabase(IDB_RECEIVE_DB);
+        req.onsuccess = () => resolve();
+        req.onerror = () => resolve();
+        req.onblocked = () => resolve();
+      } catch (_) {
+        resolve();
+      }
+    });
+  }
+
   function createNamedFile(parts, name, type) {
     if (typeof File === 'function') {
       try {
@@ -228,8 +364,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       return createNamedFile([toOwnedBytes(source)], name, mime);
     }
     if (typeof Blob !== 'undefined' && source instanceof Blob) {
-      const buf = await source.arrayBuffer();
-      return createNamedFile([buf], name, mime);
+      return createNamedFile([source], name, mime);
     }
     if (Array.isArray(source)) {
       return createNamedFile(source, name, mime);
@@ -275,6 +410,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
 
       this.signalingUrl = config.signalingUrl || defaultSignalingUrl;
+      this._signalingUrls = config.signalingUrl ? [config.signalingUrl] : getSignalingUrls();
+      this._signalingUrlIndex = 0;
+      this._lanHints = new Set(getPageLanHints());
+      this._localHostCandidates = [];
+      this._connectWatchTimer = null;
       this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
 
       // Event Callbacks
@@ -351,8 +491,6 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
       // Sender state
       this.currentFile = null;
-      this._batch = null;
-      this._incomingBatch = null;
       this._cryptoWorkers = [];
       this._cryptoWorkerCursor = 0;
       this._cryptoJobId = 1;
@@ -393,9 +531,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
             blob: fileObj,
             fileName: meta?.name || fileObj?.name,
             fileType: meta?.mimeType || meta?.type || fileObj?.type,
-            fileIndex: meta?.fileIndex ?? 0,
-            fileCount: meta?.fileCount ?? 1,
-            moreRemaining: Boolean(meta?.moreRemaining)
+            packedFileCount: meta?.packedFileCount || 1,
+            packedFiles: Array.isArray(meta?.packedFiles) ? meta.packedFiles : []
           });
           break;
         case 'fileMetadata':
@@ -847,28 +984,53 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         return;
       }
 
+      const savedRoom = String(roomCode).trim();
+      const savedSession = sessionCode ? String(sessionCode).trim() : savedRoom;
       this.disconnect();
-      this.roomCode = String(roomCode).trim();
-      this.sessionCode = sessionCode ? String(sessionCode).trim() : this.roomCode;
+      this.roomCode = savedRoom;
+      this.sessionCode = savedSession;
+      this._signalingUrls = getSignalingUrls();
+      this._signalingUrlIndex = 0;
+      this._lanHints = new Set(getPageLanHints());
+      this._localHostCandidates = [];
       this._setState('connecting');
       this.onStatusChange('Connecting to signaling server…', 'info');
+      this._openSignalingSocket();
+    }
 
+    _openSignalingSocket() {
+      this.signalingUrl = this._signalingUrls[this._signalingUrlIndex] || this.signalingUrl;
       try {
         const WebSocketImpl = typeof window !== 'undefined' ? window.WebSocket : require('ws');
         this.ws = new WebSocketImpl(this.signalingUrl);
       } catch (err) {
+        if (this._tryNextSignalingUrl()) return;
         this._setState('failed');
         this.onError(`Failed to connect to signaling server: ${err.message}`, 'ERR_WS_CONNECT');
         return;
       }
 
-      this.ws.onopen = () => {
-        this._hasTriedFallback = false;
+      const socket = this.ws;
+      const connectTimeout = setTimeout(() => {
+        if (this.ws !== socket) return;
+        if (socket.readyState !== (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1)) {
+          try { socket.close(); } catch (_) { }
+          if (!this._tryNextSignalingUrl()) {
+            this._setState('failed');
+            this.onError('WebSocket connection to signaling server timed out.', 'ERR_WS_TIMEOUT');
+          }
+        }
+      }, 4000);
+
+      socket.onopen = () => {
+        if (this.ws !== socket) return;
+        clearTimeout(connectTimeout);
         this.onStatusChange('Connected to signaling server. Joining room…', 'info');
         this._sendSignaling({ type: 'join-room', room: this.roomCode });
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         try {
           const msg = JSON.parse(event.data);
           this._handleSignalingMessage(msg);
@@ -877,49 +1039,69 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         }
       };
 
-      this.ws.onerror = () => {
-        if (this.transferState === 'completed') return;
-        if (!this._hasTriedFallback && typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:') {
-          this._hasTriedFallback = true;
-          const altUrl = this.signalingUrl.includes(':8080')
-            ? `ws://${window.location.host}/ws`
-            : `ws://${window.location.hostname}:8080`;
-          console.log(`[WebRTC Engine] Primary signaling failed. Retrying fallback URL: ${altUrl}`);
-          this.signalingUrl = altUrl;
-          try { this.ws.close(); } catch (_) { }
-          this.connect(this.roomCode, this.sessionCode);
-          return;
-        }
+      socket.onerror = () => {
+        if (this.ws !== socket) return;
+        clearTimeout(connectTimeout);
+        if (this.transferState === 'completed' || this.role) return;
+        if (this._tryNextSignalingUrl()) return;
         this._setState('failed');
         this.onStatusChange('Signaling server connection error', 'error');
         this.onError('WebSocket connection to signaling server failed.', 'ERR_WS_ERROR');
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws !== socket) return;
+        clearTimeout(connectTimeout);
         console.log('[WebRTC Engine] WebSocket closed');
+        if (this.transferState === 'connecting' && !this.role && this._tryNextSignalingUrl()) return;
       };
+    }
+
+    _tryNextSignalingUrl() {
+      if (this.role) return false;
+      if (this._signalingUrlIndex >= this._signalingUrls.length - 1) return false;
+      this._signalingUrlIndex += 1;
+      const nextUrl = this._signalingUrls[this._signalingUrlIndex];
+      console.log(`[WebRTC Engine] Signaling retry ${this._signalingUrlIndex + 1}/${this._signalingUrls.length}: ${nextUrl}`);
+      this.onStatusChange('Retrying signaling connection…', 'info');
+      const old = this.ws;
+      this.ws = null;
+      try { if (old) old.close(); } catch (_) { }
+      this._openSignalingSocket();
+      return true;
     }
 
     _handleSignalingMessage(msg) {
       switch (msg.type) {
         case 'joined':
           this.role = msg.role;
+          this._addLanHints(msg.lanHints);
+          this._shareLanHints();
           this.onStatusChange(`Room joined. Waiting for peer…`, 'info');
           if (msg.peerPresent && this.role === 'initiator') {
             this.onPeerJoined();
+            this._armConnectWatch();
             this._initiatePeerConnection();
           }
           break;
 
         case 'peer-joined':
-          this.onStatusChange('Peer connected! Negotiating P2P link…', 'info');
+          this._addLanHints(msg.lanHints);
+          this._shareLanHints();
+          this.onStatusChange('Peer found. Connecting devices…', 'info');
           this.onPeerJoined();
+          this._armConnectWatch();
           if (this.role === 'initiator') {
             this._initiatePeerConnection();
           }
           break;
 
+        case 'lan-hint':
+          this._addLanHints(msg.ips || msg.lanHints);
+          break;
+
         case 'offer':
+          this._armConnectWatch();
           this._handleOffer(msg.offer);
           break;
 
@@ -952,8 +1134,9 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     _createPeerConnection() {
       const pcConfig = {
         iceServers: this.iceServers,
-        iceCandidatePoolSize: 10, // More candidates pre-gathered = faster hole-punching
+        iceCandidatePoolSize: 0,
         bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
         iceTransportPolicy: 'all'
       };
 
@@ -978,6 +1161,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           this._clearIceReconnectTimer();
           this._iceRestartAttempts = 0;
           this._isIceRestarting = false;
+          this._clearConnectWatch();
           this._setState('connected');
           this._reportConnectionType();
         } else if (state === 'failed') {
@@ -1005,6 +1189,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           if (state === 'connected') {
             this._clearIceReconnectTimer();
             this._isIceRestarting = false;
+            this._clearConnectWatch();
             this._setState('connected');
           } else if (state === 'failed') {
             if (this._iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
@@ -1020,19 +1205,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
 
       this.pc.onicecandidate = (event) => {
-        if (event.candidate && event.candidate.candidate) {
-          const candidateData = event.candidate.toJSON ? event.candidate.toJSON() : {
-            candidate: event.candidate.candidate,
-            sdpMid: event.candidate.sdpMid,
-            sdpMLineIndex: event.candidate.sdpMLineIndex,
-            usernameFragment: event.candidate.usernameFragment
-          };
-          this._sendSignaling({ type: 'ice-candidate', candidate: candidateData });
-        } else if (!event.candidate) {
-          this._sendSignaling({
-            type: 'ice-candidate',
-            candidate: { candidate: '', sdpMid: '0', sdpMLineIndex: 0 }
-          });
+        if (!event.candidate || !event.candidate.candidate) return;
+        this._sendIceCandidateObject(event.candidate);
+        if (/typ host\b/i.test(event.candidate.candidate)) {
+          this._localHostCandidates.push(event.candidate);
+          this._sendRewrittenHostCandidates(event.candidate);
         }
       };
 
@@ -1146,11 +1323,88 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         RTCIceCandidateImpl = wrtc.RTCIceCandidate;
       }
 
-      const rtcCandidate = new RTCIceCandidateImpl(candidate);
-      if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
-        try { await this.pc.addIceCandidate(rtcCandidate); } catch (e) { }
-      } else {
-        this.pendingIceCandidates.push(rtcCandidate);
+      const payload = {
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid == null ? '0' : candidate.sdpMid,
+        sdpMLineIndex: typeof candidate.sdpMLineIndex === 'number' ? candidate.sdpMLineIndex : 0
+      };
+
+      try {
+        const rtcCandidate = new RTCIceCandidateImpl(payload);
+        if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
+          await this.pc.addIceCandidate(rtcCandidate);
+        } else {
+          this.pendingIceCandidates.push(rtcCandidate);
+        }
+      } catch (_) { }
+    }
+
+    _sendIceCandidateObject(candidate) {
+      const candidateData = {
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid == null ? '0' : candidate.sdpMid,
+        sdpMLineIndex: typeof candidate.sdpMLineIndex === 'number' ? candidate.sdpMLineIndex : 0
+      };
+      this._sendSignaling({ type: 'ice-candidate', candidate: candidateData });
+    }
+
+    _sendRewrittenHostCandidates(candidate) {
+      const extras = rewriteHostCandidate(candidate.candidate, [...this._lanHints]);
+      for (const extra of extras) {
+        this._sendSignaling({
+          type: 'ice-candidate',
+          candidate: {
+            candidate: extra,
+            sdpMid: candidate.sdpMid == null ? '0' : candidate.sdpMid,
+            sdpMLineIndex: typeof candidate.sdpMLineIndex === 'number' ? candidate.sdpMLineIndex : 0
+          }
+        });
+      }
+    }
+
+    _addLanHints(ips) {
+      if (!Array.isArray(ips) || !ips.length) return;
+      let added = false;
+      for (const ip of ips) {
+        const clean = normalizeIp(ip);
+        if (isPrivateIPv4(clean) && !this._lanHints.has(clean)) {
+          this._lanHints.add(clean);
+          added = true;
+        }
+      }
+      if (added) {
+        for (const local of this._localHostCandidates) {
+          this._sendRewrittenHostCandidates(local);
+        }
+      }
+    }
+
+    _shareLanHints() {
+      const ips = [...this._lanHints];
+      if (!ips.length) return;
+      this._sendSignaling({ type: 'lan-hint', ips });
+    }
+
+    _armConnectWatch() {
+      this._clearConnectWatch();
+      this._connectWatchTimer = setTimeout(() => {
+        if (this.transferState !== 'connecting' && this.transferState !== 'idle') return;
+        if (this.dataChannel && this.dataChannel.readyState === 'open') return;
+        this.onStatusChange('Still connecting — retrying LAN path…', 'warning');
+        for (const local of this._localHostCandidates) {
+          this._sendRewrittenHostCandidates(local);
+        }
+        this._shareLanHints();
+        if (this.pc && this.role === 'initiator') {
+          this._attemptIceRestart();
+        }
+      }, 8000);
+    }
+
+    _clearConnectWatch() {
+      if (this._connectWatchTimer) {
+        clearTimeout(this._connectWatchTimer);
+        this._connectWatchTimer = null;
       }
     }
 
@@ -1170,6 +1424,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.dataChannel.onopen = () => {
         console.log('[WebRTC Engine] DataChannel OPEN');
         this._negotiatedChunkSize = this._getSafeChunkSize();
+        this._clearConnectWatch();
         this._setState('connected');
         this.onStatusChange('P2P DataChannel open. Encrypted link ready! ⚡', 'success');
         this.onDataChannelOpen();
@@ -1205,25 +1460,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         try {
           const msg = JSON.parse(data);
 
-          if (msg.type === 'batch-manifest') {
-            this._incomingBatch = {
-              files: Array.isArray(msg.files) ? msg.files : [],
-              totalFiles: Number(msg.totalFiles) || (Array.isArray(msg.files) ? msg.files.length : 1),
-              totalBytes: Number(msg.totalBytes) || 0,
-              index: 0,
-              completedBytes: 0
-            };
-            this.onFileMetadata({
-              type: 'batch-manifest',
-              totalFiles: this._incomingBatch.totalFiles,
-              totalBytes: this._incomingBatch.totalBytes,
-              files: this._incomingBatch.files
-            });
-            this.onStatusChange(
-              `Incoming transfer: ${this._incomingBatch.totalFiles} file${this._incomingBatch.totalFiles === 1 ? '' : 's'} (${this._formatBytes(this._incomingBatch.totalBytes)})`,
-              'info'
-            );
-          } else if (msg.type === 'metadata') {
+          if (msg.type === 'metadata') {
             await this._initReceiverFromMetadata(msg);
           } else if (msg.type === 'metadata-ack') {
             this._resolveMetadataAck();
@@ -1235,41 +1472,23 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
             await this._maybeFinalizeReceiver();
           } else if (msg.type === 'ack-complete') {
             this._clearStallTimer();
-            if (this.currentFile || this.isTransferring || this._batch) {
+            if (this.currentFile || this.isTransferring) {
               const file = this.currentFile;
-              const batchSnap = this._getBatchSnapshot();
-              const moreRemaining = Boolean(this._batch && this._batch.index < this._batch.files.length - 1);
+              const packedCount = Number(file?.fluxPacked?.count) || 1;
 
               this.currentFile = null;
               this.isTransferring = false;
 
-              const meta = {
+              this.onFileComplete(null, {
                 name: file ? file.name : 'File',
                 size: file ? file.size : 0,
                 isSender: true,
-                fileIndex: batchSnap.fileIndex,
-                fileCount: batchSnap.fileCount,
-                moreRemaining
-              };
-              this.onFileComplete(null, meta);
-
-              if (moreRemaining) {
-                this._batch.completedBytes += file ? file.size : 0;
-                this._batch.index += 1;
-                this._setState('transferring');
-                this.onStatusChange(
-                  `File ${this._batch.index}/${this._batch.files.length} sent. Starting next file…`,
-                  'info'
-                );
-                await this.sendFile(this._batch.files[this._batch.index]);
-                return;
-              }
-
-              this._batch = null;
+                packedFileCount: packedCount
+              });
               this._setState('completed');
               this.onStatusChange(
-                batchSnap.fileCount > 1
-                  ? `All ${batchSnap.fileCount} files verified and acknowledged! 🎉`
+                packedCount > 1
+                  ? `Zip archive with ${packedCount} files verified and acknowledged! 🎉`
                   : 'File transfer verified and acknowledged by receiver! 🎉',
                 'success'
               );
@@ -1317,18 +1536,6 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.finishStarted = false;
       this._receiverReady = false;
       this.senderFinalHash = msg.hash || this.senderFinalHash || null;
-      if (typeof msg.fileCount === 'number' && msg.fileCount > 1 && !this._incomingBatch) {
-        this._incomingBatch = {
-          files: [],
-          totalFiles: msg.fileCount,
-          totalBytes: Number(msg.batchTotalBytes) || 0,
-          index: Number(msg.fileIndex) || 0,
-          completedBytes: 0
-        };
-      }
-      if (typeof msg.fileIndex === 'number' && this._incomingBatch) {
-        this._incomingBatch.index = msg.fileIndex;
-      }
       this.receivedChunkSet = new Set();
       this.receiverHasher = new (this._getStreamingSHA256Class())();
       this._setState('transferring');
@@ -1363,53 +1570,132 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
     }
 
+    async _tryInitOpfsStorage(msg) {
+      if (typeof navigator === 'undefined' || !navigator.storage || typeof navigator.storage.getDirectory !== 'function' || typeof Worker === 'undefined') {
+        return false;
+      }
+      try {
+        const worker = new Worker('/opfs-writer-worker.js');
+        const isInitialized = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), 5000);
+          worker.onmessage = (e) => {
+            if (e.data?.type === 'init-ack') {
+              clearTimeout(timer);
+              resolve(true);
+            } else if (e.data?.type === 'error') {
+              clearTimeout(timer);
+              resolve(false);
+            }
+          };
+          worker.onerror = () => {
+            clearTimeout(timer);
+            resolve(false);
+          };
+          worker.postMessage({ type: 'init', fileName: msg.name, totalSize: msg.size });
+        });
+        if (isInitialized) {
+          this._attachOpfsWorker(worker);
+          this.opfsActive = true;
+          return true;
+        }
+        try { worker.terminate(); } catch (_) { }
+      } catch (_) {
+        this.opfsActive = false;
+      }
+      return false;
+    }
+
+    async _tryInitIdbStorage(msg) {
+      const db = await openReceiveIdb();
+      if (!db) return null;
+      try {
+        await clearReceiveIdb(db);
+      } catch (_) {
+        try { db.close(); } catch (__) { }
+        return null;
+      }
+
+      const state = {
+        db,
+        pending: [],
+        pendingBytes: 0,
+        nextKey: 0,
+        mime: msg.mimeType || 'application/octet-stream'
+      };
+
+      const flush = () => new Promise((resolve, reject) => {
+        if (!state.pending.length) {
+          resolve();
+          return;
+        }
+        const blob = new Blob(state.pending);
+        const key = state.nextKey;
+        state.nextKey += 1;
+        state.pending = [];
+        state.pendingBytes = 0;
+        try {
+          const tx = state.db.transaction(IDB_RECEIVE_STORE, 'readwrite');
+          tx.objectStore(IDB_RECEIVE_STORE).put(blob, key);
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed'));
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const closeAndDelete = async () => {
+        try { state.db.close(); } catch (_) { }
+        await deleteReceiveIdb();
+      };
+
+      return {
+        async writeChunk(_index, _offset, chunkData) {
+          state.pending.push(chunkData);
+          state.pendingBytes += chunkData.byteLength || 0;
+          if (state.pendingBytes >= IDB_FLUSH_BYTES) {
+            await flush();
+          }
+        },
+        async finalize() {
+          await flush();
+          const blobs = [];
+          for (let key = 0; key < state.nextKey; key++) {
+            const tx = state.db.transaction(IDB_RECEIVE_STORE, 'readonly');
+            const part = await idbRequest(tx.objectStore(IDB_RECEIVE_STORE).get(key));
+            if (part) blobs.push(part);
+          }
+          await closeAndDelete();
+          return new Blob(blobs, { type: state.mime });
+        },
+        async purge() {
+          await closeAndDelete();
+        },
+        async abort() {
+          await closeAndDelete();
+        }
+      };
+    }
+
     async _initReceiverStorage(msg) {
       this.opfsActive = false;
       this.storage = null;
-      const preferMemory = !isSecureBrowserContext() || !msg.size || msg.size <= MAX_MEMORY_FALLBACK_SIZE;
+      this.memoryChunks = null;
 
-      if (!preferMemory && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function' && typeof Worker !== 'undefined') {
-        try {
-          const worker = new Worker('/opfs-writer-worker.js');
-          const isInitialized = await new Promise((resolve) => {
-            const timer = setTimeout(() => resolve(false), 2500);
-            worker.onmessage = (e) => {
-              if (e.data?.type === 'init-ack') {
-                clearTimeout(timer);
-                resolve(true);
-              } else if (e.data?.type === 'error') {
-                clearTimeout(timer);
-                resolve(false);
-              }
-            };
-            worker.postMessage({ type: 'init', fileName: msg.name, totalSize: msg.size });
-          });
-          if (isInitialized) {
-            this._attachOpfsWorker(worker);
-            this.opfsActive = true;
-          } else {
-            try { worker.terminate(); } catch (_) { }
-          }
-        } catch (_) {
-          this.opfsActive = false;
-        }
+      const fileSize = Number(msg.size) || 0;
+      const largeFile = fileSize > MAX_MEMORY_FALLBACK_SIZE;
+      const canTryOpfs = typeof navigator !== 'undefined'
+        && navigator.storage
+        && typeof navigator.storage.getDirectory === 'function'
+        && typeof Worker !== 'undefined';
+
+      if (canTryOpfs && (largeFile || isSecureBrowserContext())) {
+        await this._tryInitOpfsStorage(msg);
       }
 
-      if (!this.opfsActive) {
-        if (msg.size > MAX_MEMORY_FALLBACK_SIZE) {
-          const maxMB = Math.round(MAX_MEMORY_FALLBACK_SIZE / (1024 * 1024));
-          const sizeMB = (msg.size / (1024 * 1024)).toFixed(1);
-          throw new Error(
-            `This browser cannot stream to disk (OPFS), and the file (${sizeMB} MB) exceeds the ${maxMB} MB in-memory limit.`
-          );
-        }
-        this.memoryChunks = new Array(msg.totalChunks);
-      }
-
-      const self = this;
-      this.storage = {
-        async finalize() {
-          if (self.opfsActive && self.opfsWorker) {
+      if (this.opfsActive) {
+        const self = this;
+        this.storage = {
+          async finalize() {
             await self._waitForOpfsWrites();
             const fileObj = await new Promise((resolve, reject) => {
               const timer = setTimeout(() => reject(new Error('OPFS worker finalize timed out')), 15000);
@@ -1421,7 +1707,33 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
             self.opfsWorker = null;
             self.opfsActive = false;
             return fileObj;
+          },
+          async purge() {
+            self._cleanupReceiverStorage(true);
+          },
+          async abort() {
+            self._cleanupReceiverStorage(true);
           }
+        };
+        return;
+      }
+
+      if (largeFile) {
+        const idbStorage = await this._tryInitIdbStorage(msg);
+        if (idbStorage) {
+          this.storage = idbStorage;
+          this.onStatusChange(
+            `Receiving large file (${this._formatBytes(fileSize)}) with disk-backed storage…`,
+            'info'
+          );
+          return;
+        }
+      }
+
+      this.memoryChunks = new Array(msg.totalChunks || 0);
+      const self = this;
+      this.storage = {
+        async finalize() {
           const chunks = self.memoryChunks || [];
           for (let i = 0; i < chunks.length; i++) {
             if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
@@ -1514,8 +1826,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         this._opfsWritePending += 1;
         const writeCopy = chunkBytes.slice();
         this.opfsWorker.postMessage({ type: 'write', chunkIndex, offset, buffer: writeCopy.buffer }, [writeCopy.buffer]);
-      }
-      if (this.memoryChunks) {
+      } else if (this.memoryChunks) {
         this.memoryChunks[chunkIndex] = chunkBytes;
       } else if (this.storage && typeof this.storage.writeChunk === 'function') {
         await this.storage.writeChunk(chunkIndex, chunkIndex * meta.chunkSize, chunkBytes);
@@ -1617,39 +1928,21 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           );
         }
 
-        const batchSnap = this._getBatchSnapshot();
-        const moreRemaining = Boolean(
-          this._incomingBatch && this._incomingBatch.index < this._incomingBatch.totalFiles - 1
-        );
+        const packedCount = Number(meta.packedFileCount) || (Array.isArray(meta.packedFiles) ? meta.packedFiles.length : 1);
 
         this.isTransferring = false;
         this.onFileComplete(fileObj, {
           ...meta,
-          fileIndex: batchSnap.fileIndex,
-          fileCount: batchSnap.fileCount,
-          moreRemaining
+          packedFileCount: packedCount
         });
         this._sendControlMessage({ type: 'ack-complete', hash: computedHash });
         this.storage = null;
         this.receiverHasher = null;
 
-        if (moreRemaining) {
-          this._incomingBatch.completedBytes += meta.size || 0;
-          this._incomingBatch.index += 1;
-          this._prepareReceiverForNextFile();
-          this._setState('transferring');
-          this.onStatusChange(
-            `File ${batchSnap.fileIndex + 1}/${batchSnap.fileCount} received. Waiting for next file…`,
-            'success'
-          );
-          return;
-        }
-
-        this._incomingBatch = null;
         this._setState('completed');
         this.onStatusChange(
-          batchSnap.fileCount > 1
-            ? `All ${batchSnap.fileCount} files received & verified! 🎉`
+          packedCount > 1
+            ? `Zip archive "${meta.name}" with ${packedCount} files received & verified! 🎉`
             : `File "${meta.name}" received & verified successfully! 🎉`,
           'success'
         );
@@ -1668,6 +1961,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.memoryChunks = null;
       this._receiverReady = false;
       this.receivedChunkSet = null;
+      const storage = this.storage;
+      this.storage = null;
+      if (storage && typeof storage.writeChunk === 'function' && typeof storage.purge === 'function') {
+        try { Promise.resolve(storage.purge()).catch(() => {}); } catch (_) { }
+      }
       if (this.opfsWorker) {
         if (deleteFile) {
           try { this.opfsWorker.postMessage({ type: 'abort' }); } catch (_) { }
@@ -1833,65 +2131,23 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       return [fileOrFiles];
     }
 
-    _getBatchSnapshot() {
-      if (this._batch) {
-        return {
-          fileIndex: this._batch.index,
-          fileCount: this._batch.files.length,
-          completedBytes: this._batch.completedBytes,
-          totalBytes: this._batch.totalBytes
-        };
-      }
-      if (this._incomingBatch) {
-        return {
-          fileIndex: this._incomingBatch.index,
-          fileCount: this._incomingBatch.totalFiles,
-          completedBytes: this._incomingBatch.completedBytes,
-          totalBytes: this._incomingBatch.totalBytes
-        };
-      }
-      return { fileIndex: 0, fileCount: 1, completedBytes: 0, totalBytes: 0 };
-    }
-
     _emitTransferProgress({ currentBytes, currentTotal, role }) {
-      const batch = this._getBatchSnapshot();
-      const transferredBytes = (batch.totalBytes ? batch.completedBytes : 0) + currentBytes;
-      const totalBytes = batch.totalBytes || currentTotal || 0;
       const fileName = (this.currentFile && this.currentFile.name) || (this.incomingMeta && this.incomingMeta.name) || '';
       this.onProgress({
-        percent: totalBytes > 0 ? Math.min(100, (transferredBytes / totalBytes) * 100) : 0,
-        transferredBytes,
-        totalBytes,
+        percent: currentTotal > 0 ? Math.min(100, (currentBytes / currentTotal) * 100) : 0,
+        transferredBytes: currentBytes,
+        totalBytes: currentTotal || 0,
         currentFileBytes: currentBytes,
         currentFileTotal: currentTotal,
-        fileIndex: batch.fileIndex,
-        fileCount: batch.fileCount,
         fileName,
         speedBps: this.currentSpeedBps,
         role
       });
     }
 
-    _prepareReceiverForNextFile() {
-      this.incomingMeta = null;
-      this.finishStarted = false;
-      this._receiverReady = false;
-      this.aesKey = null;
-      this.salt = null;
-      this.senderFinalHash = null;
-      this.receivedChunksCount = 0;
-      this.receivedBytes = 0;
-      this.memoryChunks = null;
-      this.receivedChunkSet = null;
-      this._earlyChunkQueue = [];
-      this.storage = null;
-      this.receiverHasher = null;
-      this.isTransferring = false;
-    }
-
     /**
      * Send one or more files over the open DataChannel.
-     * Multiple files share the same pairing session and are sent sequentially.
+     * Multiple files are packed into a single zip archive first.
      * @param {File|Blob|File[]|FileList} fileOrFiles
      */
     async sendFiles(fileOrFiles) {
@@ -1900,31 +2156,33 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         this.onError('No file selected for transfer.', 'ERR_NO_FILE');
         return;
       }
-      this._batch = {
-        files,
-        index: 0,
-        totalBytes: files.reduce((sum, file) => sum + (file.size || 0), 0),
-        completedBytes: 0
-      };
-      if (files.length > 1) {
-        this._sendControlMessage({
-          type: 'batch-manifest',
-          v: 3,
-          totalFiles: files.length,
-          totalBytes: this._batch.totalBytes,
-          files: files.map((file, index) => ({
-            index,
-            name: file.name,
-            size: file.size,
-            mimeType: file.type || 'application/octet-stream'
-          }))
+      if (files.length === 1) {
+        return this.sendFile(files[0]);
+      }
+
+      try {
+        this.onStatusChange(`Packing ${files.length} files into a zip archive…`, 'info');
+        const zipFile = await createZipArchive(files, {
+          onProgress: ({ percent, currentName }) => {
+            this.onProgress({
+              percent,
+              transferredBytes: 0,
+              totalBytes: files.reduce((sum, file) => sum + (file.size || 0), 0),
+              fileName: currentName ? `Zipping ${currentName}` : 'Creating zip archive',
+              speedBps: 0,
+              role: 'sender',
+              phase: 'zip'
+            });
+          }
         });
         this.onStatusChange(
-          `Starting batch of ${files.length} files (${this._formatBytes(this._batch.totalBytes)})…`,
+          `Sending zip archive "${zipFile.name}" (${this._formatBytes(zipFile.size)})…`,
           'info'
         );
+        return this.sendFile(zipFile);
+      } catch (err) {
+        this.onError(err.message || 'Failed to create zip archive.', 'ERR_ZIP');
       }
-      return this.sendFile(files[0]);
     }
 
     /**
@@ -1977,7 +2235,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         throw new Error(`SHA-256 calculation failed: ${hashErr.message}`);
       });
 
-      const batchSnap = this._getBatchSnapshot();
+      const packed = file.fluxPacked || null;
       const metadata = {
         type: 'metadata',
         v: 3,
@@ -1988,9 +2246,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         chunkSize: chunkSize,
         totalChunks: totalChunks,
         salt: bytesToBase64(this.salt),
-        fileIndex: batchSnap.fileIndex,
-        fileCount: batchSnap.fileCount,
-        batchTotalBytes: batchSnap.totalBytes
+        packedFileCount: packed?.count || 1,
+        packedFiles: Array.isArray(packed?.files) ? packed.files.slice(0, MAX_BATCH_FILES) : undefined
       };
 
       this.onStatusChange(`Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
@@ -2173,8 +2430,6 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     _handleTransferFailure(errorMessage, errorCode) {
       if (this.transferState === 'completed') return;
       this.isTransferring = false;
-      this._batch = null;
-      this._incomingBatch = null;
       this._clearStallTimer();
       this._rejectMetadataAck(new Error(errorMessage));
       this._setState('failed');
@@ -2205,7 +2460,10 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.isTransferring = false;
       this._clearStallTimer();
       this._clearIceReconnectTimer();
+      this._clearConnectWatch();
       this._isIceRestarting = false;
+      this._localHostCandidates = [];
+      this._lanHints = new Set(getPageLanHints());
       this._rejectMetadataAck(new Error('Disconnected'));
       this._cleanupReceiverStorage(true);
       this._setState('idle', { force: true });
@@ -2235,8 +2493,6 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.aesKey = null;
       this.salt = null;
       this.currentFile = null;
-      this._batch = null;
-      this._incomingBatch = null;
       this._teardownCryptoWorkers();
     }
   }

@@ -3,7 +3,7 @@ import { Upload, Download, QrCode, FileText, Check, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import jsQR from 'jsqr';
 import QrScanner from './QrScanner.jsx';
-import { buildPairingUrl, extractPairingCode, readPairingCodeFromLocation, clearPairingCodeFromLocation } from '../utils/pairing-url.js';
+import { buildPairingUrl, extractPairingCode, readPairingCodeFromLocation, clearPairingCodeFromLocation, resolveShareableOrigin } from '../utils/pairing-url.js';
 
 async function walkDirectoryEntry(entry, out, prefix = '') {
   if (!entry) return;
@@ -54,7 +54,18 @@ export default function TransferDashboard({ transfer, addToast }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
+  const [shareableOrigin, setShareableOrigin] = useState(
+    typeof window !== 'undefined' ? window.location.origin : ''
+  );
   const joinedFromUrlRef = React.useRef(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    resolveShareableOrigin().then((origin) => {
+      if (!cancelled && origin) setShareableOrigin(origin);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   const qrInputRef = React.useRef(null);
 
@@ -183,9 +194,11 @@ export default function TransferDashboard({ transfer, addToast }) {
     transferSpeed,
     transferredBytes,
     totalBytes,
-    currentFileIndex = 0,
-    totalFiles = selectedFiles.length || 1,
     currentFileName = '',
+    packedFileCount = selectedFiles.length || 1,
+    packedFiles = [],
+    isPacking = false,
+    packProgress = 0,
     receivedFiles = [],
     receivedFileBlob,
     receivedFileUrl,
@@ -200,9 +213,12 @@ export default function TransferDashboard({ transfer, addToast }) {
     if ('showSaveFilePicker' in window && item.blob) {
       try {
         const ext = item.name && item.name.includes('.') ? `.${item.name.split('.').pop()}` : undefined;
+        const isZip = (item.type === 'application/zip') || (ext && ext.toLowerCase() === '.zip');
         const handle = await window.showSaveFilePicker({
-          suggestedName: item.name || 'downloaded-file',
-          types: item.type && ext ? [{ description: 'Received file', accept: { [item.type]: [ext] } }] : undefined
+          suggestedName: item.name || (isZip ? 'fluxtransfer.zip' : 'downloaded-file'),
+          types: isZip
+            ? [{ description: 'Zip archive', accept: { 'application/zip': ['.zip'] } }]
+            : (item.type && ext ? [{ description: 'Received file', accept: { [item.type]: [ext] } }] : undefined)
         });
         const writable = await handle.createWritable();
         await writable.write(item.blob);
@@ -274,7 +290,9 @@ export default function TransferDashboard({ transfer, addToast }) {
       addToast(
         'info',
         list.length === 1 ? 'File Selected' : 'Files Selected',
-        list.length === 1 ? `Ready to send: ${list[0].name}` : `Ready to send ${list.length} files`
+        list.length === 1
+          ? `Ready to send: ${list[0].name}`
+          : `Packing ${list.length} files into a zip archive`
       );
     }
   };
@@ -345,9 +363,22 @@ export default function TransferDashboard({ transfer, addToast }) {
   const isCompleted = engineState === 'completed';
   const isSending = role === 'sender' || selectedFiles.length > 0;
   const isReceiving = role === 'receiver' || receivedFiles.length > 0 || Boolean(receivedFileUrl);
-  const fileCount = Math.max(totalFiles || 0, selectedFiles.length, receivedFiles.length, 1);
-  const activeName = currentFileName || selectedFile?.name || receivedFileName || (fileCount > 1 ? `${fileCount} files` : 'Incoming File');
-  const batchLabel = fileCount > 1 ? `File ${Math.min(currentFileIndex + 1, fileCount)} of ${fileCount}` : null;
+  const archiveCount = Math.max(packedFileCount || 0, packedFiles.length, selectedFiles.length, 1);
+  const isZipArchive = archiveCount > 1 || /\.zip$/i.test(currentFileName || receivedFileName || '');
+  const contentsList = packedFiles.length
+    ? packedFiles
+    : (isSending && selectedFiles.length > 1 ? selectedFiles : []);
+  const activeName = currentFileName
+    || selectedFile?.name
+    || receivedFileName
+    || (isZipArchive ? `${archiveCount} files.zip` : 'Incoming File');
+  const progressPercent = isCompleted
+    ? 100
+    : engineState === 'transferring'
+    ? transferProgress
+    : isPacking
+    ? packProgress
+    : (packProgress >= 100 && selectedFiles.length > 1 ? 100 : transferProgress);
 
   const renderTransferProgressCard = () => (
     <div
@@ -372,11 +403,13 @@ export default function TransferDashboard({ transfer, addToast }) {
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
               {isCompleted
                 ? (isSending
-                  ? (fileCount > 1 ? `All ${fileCount} files sent` : 'File sent successfully to peer')
-                  : (fileCount > 1 ? `All ${fileCount} files received` : 'File received successfully'))
+                  ? (isZipArchive ? `Zip archive sent (${archiveCount} files)` : 'File sent successfully to peer')
+                  : (isZipArchive ? `Zip archive received (${archiveCount} files)` : 'File received successfully'))
+                : isPacking && engineState !== 'transferring'
+                ? `Creating zip archive${archiveCount > 1 ? ` · ${archiveCount} files` : ''}`
                 : (isSending
-                  ? (batchLabel ? `Sending ${batchLabel.toLowerCase()}` : 'Sending file to peer')
-                  : (batchLabel ? `Receiving ${batchLabel.toLowerCase()}` : 'Receiving file from peer'))}
+                  ? (isZipArchive ? 'Sending zip archive to peer' : 'Sending file to peer')
+                  : (isZipArchive ? 'Receiving zip archive from peer' : 'Receiving file from peer'))}
             </div>
           </div>
           <span
@@ -440,10 +473,12 @@ export default function TransferDashboard({ transfer, addToast }) {
               ? 'Completed'
               : engineState === 'transferring'
               ? `${transferProgress}% Transferring`
+              : isPacking
+              ? `${packProgress}% Zipping`
               : engineState === 'connecting'
               ? 'Connecting...'
               : selectedFiles.length
-              ? 'Ready for Receiver'
+              ? (isZipArchive && packProgress >= 100 ? 'Zip ready' : 'Ready for Receiver')
               : 'Idle'}
           </span>
         </div>
@@ -452,7 +487,7 @@ export default function TransferDashboard({ transfer, addToast }) {
           <div
             style={{
               height: '100%',
-              width: `${transferProgress}%`,
+              width: `${progressPercent}%`,
               background: isCompleted ? 'linear-gradient(90deg, #10b981, #059669)' : 'linear-gradient(90deg, #4f46e5, #7c3aed)',
               borderRadius: '999px',
               transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -491,7 +526,7 @@ export default function TransferDashboard({ transfer, addToast }) {
 
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '4px' }}>
-              {batchLabel ? `${batchLabel} · ${activeName}` : activeName}
+              {isZipArchive && archiveCount > 1 ? `${activeName} · ${archiveCount} files` : activeName}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', gap: '8px' }}>
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -504,30 +539,18 @@ export default function TransferDashboard({ transfer, addToast }) {
           </div>
         </div>
 
-        {(selectedFiles.length > 1 || receivedFiles.length > 1) && (
+        {contentsList.length > 1 && (
           <div style={{ maxHeight: '112px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
-            {(receivedFiles.length ? receivedFiles : selectedFiles).map((item, idx) => {
-              const done = receivedFiles.length
-                ? true
-                : isCompleted || idx < currentFileIndex || (engineState === 'transferring' && idx < currentFileIndex);
-              const active = !receivedFiles.length && idx === currentFileIndex && !isCompleted;
-              return (
-                <div key={`${item.name}-${idx}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '0.75rem', color: done ? '#059669' : active ? '#7c3aed' : 'var(--text-muted)' }}>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {done ? '✓' : active ? '→' : '○'} {item.name}
-                  </span>
-                  {item.url && (
-                    <button
-                      type="button"
-                      onClick={() => downloadReceivedItem(item)}
-                      style={{ border: 'none', background: 'transparent', color: '#7c3aed', cursor: 'pointer', fontWeight: 700, flexShrink: 0 }}
-                    >
-                      Save
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+            {contentsList.map((item, idx) => (
+              <div key={`${item.name}-${idx}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '0.75rem', color: isCompleted ? '#059669' : 'var(--text-muted)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {isCompleted ? '✓' : '•'} {item.name}
+                </span>
+                {item.size ? (
+                  <span style={{ flexShrink: 0 }}>{formatBytes(item.size)}</span>
+                ) : null}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -552,7 +575,7 @@ export default function TransferDashboard({ transfer, addToast }) {
               cursor: 'pointer'
             }}
           >
-            {receivedFiles.length > 1 ? 'Download Last' : 'Download File'} <Download size={15} />
+            {isZipArchive ? 'Download Zip' : 'Download File'} <Download size={15} />
           </button>
         )}
 
@@ -685,11 +708,11 @@ export default function TransferDashboard({ transfer, addToast }) {
               </div>
               <div>
                 <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
-                  {selectedFiles.length > 1 ? 'Files Delivered Successfully! 🎉' : 'File Delivered Successfully! 🎉'}
+                  {selectedFiles.length > 1 ? 'Zip Archive Delivered! 🎉' : 'File Delivered Successfully! 🎉'}
                 </h4>
                 <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                   {selectedFiles.length > 1
-                    ? `${selectedFiles.length} files · ${formatBytes(selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`
+                    ? `${selectedFiles.length} files packed · ${formatBytes(selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`
                     : `${selectedFile?.name || 'File'} (${formatBytes(selectedFile?.size)})`}
                 </p>
               </div>
@@ -730,7 +753,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                 }}
               >
                 <QRCodeSVG
-                  value={pairingCode ? buildPairingUrl(pairingCode) : (typeof window !== 'undefined' ? window.location.origin : 'https://fluxtransfer.app')}
+                  value={pairingCode ? buildPairingUrl(pairingCode, shareableOrigin) : (shareableOrigin || 'https://fluxtransfer.app')}
                   size={156}
                   bgColor="#ffffff"
                   fgColor="#0f172a"
@@ -746,7 +769,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                   type="button"
                   className="glass-btn"
                   onClick={async () => {
-                    const url = buildPairingUrl(pairingCode);
+                    const url = buildPairingUrl(pairingCode, shareableOrigin);
                     try {
                       if (navigator.clipboard && navigator.clipboard.writeText) {
                         await navigator.clipboard.writeText(url);
@@ -773,7 +796,9 @@ export default function TransferDashboard({ transfer, addToast }) {
                 <div style={{ marginTop: '12px', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                   {selectedFiles.length === 1
                     ? selectedFiles[0].name
-                    : `${selectedFiles.length} files ready · ${formatBytes(selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`}
+                    : isPacking
+                      ? `Creating zip · ${packProgress}% · ${selectedFiles.length} files`
+                      : `${currentFileName || `${selectedFiles.length} files.zip`} · ${formatBytes(totalBytes || selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`}
                 </div>
               )}
             </div>

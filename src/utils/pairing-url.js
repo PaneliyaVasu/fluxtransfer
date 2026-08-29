@@ -9,6 +9,24 @@ export function buildPairingUrl(code, origin) {
   return `${base}/?code=${clean}`;
 }
 
+export async function resolveShareableOrigin() {
+  if (typeof window === 'undefined' || !window.location) return '';
+  const { protocol, hostname, port } = window.location;
+  if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+    return window.location.origin;
+  }
+  try {
+    const res = await fetch('/api/lan', { cache: 'no-store' });
+    const data = await res.json();
+    const ip = Array.isArray(data?.ips) ? data.ips[0] : '';
+    if (ip) {
+      const pagePort = port || (protocol === 'https:' ? '443' : '3000');
+      return `${protocol}//${ip}:${pagePort}`;
+    }
+  } catch (_) { }
+  return window.location.origin;
+}
+
 export function extractPairingCode(raw) {
   if (!raw || typeof raw !== 'string') return null;
   const text = raw.trim();
