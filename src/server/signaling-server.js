@@ -2,8 +2,12 @@
  * FluxTransfer — Unified Server (Static Files + WebRTC Signaling)
  *
  * Serves compiled production client files AND WebSocket signaling on ONE port.
- * Static files: GET /  → serves dist/
- * Signaling:    WS /   → WebSocket upgrade
+ * This is the correct setup for cross-network deployment:
+ *   - Static files: GET /  → serves dist/
+ *   - Signaling:    WS /   → WebSocket upgrade
+ *
+ * Deploy on any cloud (Render, Railway, Fly.io, Heroku) and both
+ * the website AND the WebSocket signaling are publicly reachable.
  *
  * ZERO file data passes through this server.
  */
@@ -13,71 +17,9 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 
-const { webcrypto } = require('crypto');
-
 const PORT = process.env.PORT || 8080;
 const distDir = path.join(__dirname, '..', '..', 'dist');
 const STATIC_DIR = distDir;
-const ROOM_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes of inactivity before signaling cleanup
-
-function generateSecurePeerToken() {
-  const bytes = new Uint8Array(16);
-  webcrypto.getRandomValues(bytes);
-  return `token_${Buffer.from(bytes).toString('hex')}`;
-}
-
-let isShuttingDown = false;
-let forceShutdownTimer = null;
-
-const DEFAULT_ALLOWED_ORIGINS = [
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'http://localhost:5173',
-  'http://localhost:4173',
-  'http://localhost:8080',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:4173',
-  'http://127.0.0.1:8080'
-];
-
-function getAllowedOrigins() {
-  if (process.env.ALLOWED_ORIGINS) {
-    return process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean);
-  }
-  return DEFAULT_ALLOWED_ORIGINS;
-}
-
-function isOriginAllowed(originHeader, req) {
-  if (!originHeader) return true; // Non-browser clients or local tests without Origin header
-  const cleanOrigin = originHeader.trim().replace(/\/$/, '');
-
-  // Allow same-origin connections automatically (e.g. unified deployment on Render, Railway, VPS)
-  if (req && req.headers) {
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    if (host) {
-      const cleanHost = host.trim();
-      if (cleanOrigin === `https://${cleanHost}` || cleanOrigin === `http://${cleanHost}`) {
-        return true;
-      }
-    }
-  }
-
-  const allowed = getAllowedOrigins();
-  return allowed.some(allowedOrigin => allowedOrigin.replace(/\/$/, '') === cleanOrigin);
-}
-
-// ─── Client IP Extraction (Direct vs Trusted Proxy) ─────────────────────────
-function getClientIp(req) {
-  const trustProxy = process.env.TRUST_PROXY === 'true';
-  if (trustProxy && req && req.headers && req.headers['x-forwarded-for']) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.trim()) {
-      const clientIp = forwarded.split(',')[0].trim();
-      if (clientIp) return clientIp;
-    }
-  }
-  return (req && req.socket && req.socket.remoteAddress) || '127.0.0.1';
-}
 
 // ─── MIME Types ───────────────────────────────────────────────────────────────
 const MIME = {
@@ -96,32 +38,13 @@ const MIME = {
   '.xml': 'text/xml'
 };
 
-function getSecurityHeaders(contentType, extra = {}) {
-  return {
-    'Content-Type': contentType,
-    'Cache-Control': 'no-store, no-cache, must-revalidate',
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'Referrer-Policy': 'strict-origin-when-cross-origin',
-    ...extra
-  };
-}
-
 function serveStatic(req, res) {
+  // CORS headers for signaling health check
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   let reqPath = req.url.split('?')[0].split('#')[0];
-  try {
-    reqPath = decodeURIComponent(reqPath);
-  } catch (_) {}
 
-  // Explicit path traversal guard for unnormalized or encoded dots
-  if (req.url.includes('..') || reqPath.includes('..')) {
-    res.writeHead(403, getSecurityHeaders('text/plain'));
-    res.end('Forbidden');
-    return;
-  }
-
+  // SPA-style routing: trailing-slash pages load their index.html
   if (reqPath.endsWith('/') && reqPath !== '/') {
     reqPath += 'index.html';
   }
@@ -129,28 +52,20 @@ function serveStatic(req, res) {
     reqPath = '/index.html';
   }
 
-  const resolvedStaticDir = path.resolve(STATIC_DIR);
-  const resolvedFilePath = path.resolve(STATIC_DIR, '.' + path.sep + reqPath.replace(/^\/+/, ''));
-  const relativePath = path.relative(resolvedStaticDir, resolvedFilePath);
+  const filePath = path.join(STATIC_DIR, reqPath);
 
-  if (relativePath.startsWith('..' + path.sep) || relativePath === '..' || path.isAbsolute(relativePath)) {
-    res.writeHead(403, getSecurityHeaders('text/plain'));
-    res.end('Forbidden');
-    return;
+  // Prevent path traversal
+  if (!filePath.startsWith(STATIC_DIR)) {
+    res.writeHead(403); res.end('Forbidden'); return;
   }
-
-  const filePath = resolvedFilePath;
 
   fs.stat(filePath, (err, stat) => {
     if (err) {
+      // For unknown paths, serve root index.html (client-side routing)
       const fallback = path.join(STATIC_DIR, 'index.html');
       fs.readFile(fallback, (e, data) => {
-        if (e) {
-          res.writeHead(404, getSecurityHeaders('text/plain'));
-          res.end('Not found');
-          return;
-        }
-        res.writeHead(200, getSecurityHeaders('text/html', { 'Content-Length': data.length }));
+        if (e) { res.writeHead(404); res.end('Not found'); return; }
+        res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(data);
       });
       return;
@@ -162,17 +77,13 @@ function serveStatic(req, res) {
         if (e) {
           const fallback = path.join(STATIC_DIR, 'index.html');
           fs.readFile(fallback, (errFallback, fallbackData) => {
-            if (errFallback) {
-              res.writeHead(404, getSecurityHeaders('text/plain'));
-              res.end('Not found');
-              return;
-            }
-            res.writeHead(200, getSecurityHeaders('text/html', { 'Content-Length': fallbackData.length }));
+            if (errFallback) { res.writeHead(404); res.end('Not found'); return; }
+            res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(fallbackData);
           });
           return;
         }
-        res.writeHead(200, getSecurityHeaders('text/html', { 'Content-Length': data.length }));
+        res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(data);
       });
       return;
@@ -180,7 +91,28 @@ function serveStatic(req, res) {
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME[ext] || 'application/octet-stream';
-    const headers = getSecurityHeaders(contentType, { 'Content-Length': stat.size });
+
+    // Differentiated caching strategy:
+    //  - JS/CSS/fonts: Vite outputs content-hashed filenames, so these are safe
+    //    to cache forever with "immutable". Browser will re-fetch on next deploy
+    //    because the filename hash changes.
+    //  - HTML: always revalidate so the user always gets the latest entry point.
+    //  - Images/other: 1-hour cache, revalidate.
+    let cacheControl;
+    if (['.js', '.css', '.woff', '.woff2'].includes(ext)) {
+      cacheControl = 'public, max-age=31536000, immutable'; // 1 year — content-hashed
+    } else if (['.html'].includes(ext)) {
+      cacheControl = 'no-store, no-cache, must-revalidate';
+    } else {
+      cacheControl = 'public, max-age=3600'; // 1 hour for images etc.
+    }
+
+    const headers = {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Cache-Control': cacheControl,
+      'X-Content-Type-Options': 'nosniff',
+    };
 
     res.writeHead(200, headers);
     fs.createReadStream(filePath).pipe(res);
@@ -189,23 +121,15 @@ function serveStatic(req, res) {
 
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
+  // Health check endpoint for uptime monitors
   if (req.url === '/health' || req.url === '/api/health') {
-    if (isShuttingDown) {
-      res.writeHead(503, getSecurityHeaders('application/json', { 'Access-Control-Allow-Origin': '*' }));
-      res.end(JSON.stringify({ status: 'shutting_down', service: 'FluxTransfer Signaling Server' }));
-      return;
-    }
-    const healthData = JSON.stringify({
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify({
       status: 'ok',
       service: 'FluxTransfer Signaling Server',
       activeRooms: rooms.size,
       connectedClients: wss.clients.size
-    });
-    res.writeHead(200, getSecurityHeaders('application/json', {
-      'Access-Control-Allow-Origin': '*',
-      'Content-Length': Buffer.byteLength(healthData)
     }));
-    res.end(healthData);
     return;
   }
 
@@ -213,8 +137,8 @@ const server = http.createServer((req, res) => {
 });
 
 // ─── Room Store & Security Configuration ─────────────────────────────────────
-// Map<roomCode, { peers: Set<WebSocket>, roles: Map<peerToken, role>, lastActivityTime: number }>
-const rooms = new Map();
+const rooms = new Map(); // Map<roomCode, Set<WebSocket>>
+const roomTimestamps = new Map(); // Map<roomCode, timestamp>
 
 const MAX_MESSAGE_SIZE_BYTES = 16 * 1024; // 16 KB max message payload
 const IP_JOIN_LIMIT_PER_MIN = 30; // Max 30 room joins per IP per minute
@@ -234,46 +158,13 @@ function checkIpRateLimit(ip) {
   return entry.count <= IP_JOIN_LIMIT_PER_MIN;
 }
 
-function cleanupExpiredIpRateLimits(now = Date.now()) {
-  let cleanedCount = 0;
-  for (const [ip, entry] of ipRateLimits.entries()) {
-    if (now > entry.resetTime) {
-      ipRateLimits.delete(ip);
-      cleanedCount++;
-    }
-  }
-  return cleanedCount;
-}
-
-function touchRoomActivity(roomCode) {
-  const roomData = rooms.get(roomCode);
-  if (roomData) {
-    roomData.lastActivityTime = Date.now();
-  }
-}
-
-// ─── WebSocket Server ────────────────────────────────────────────────────────
+// ─── WebSocket Server (explicit upgrade handler for reverse proxies like Render) ───
 const wss = new WebSocketServer({
   noServer: true,
   maxPayload: MAX_MESSAGE_SIZE_BYTES
 });
 
 server.on('upgrade', (request, socket, head) => {
-  if (isShuttingDown) {
-    socket.write('HTTP/1.1 503 Service Unavailable\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nService Unavailable: Server shutting down');
-    socket.destroy();
-    return;
-  }
-
-  const origin = request.headers.origin;
-
-  if (!isOriginAllowed(origin, request)) {
-    console.warn(`[Signaling Server] Rejected WebSocket upgrade request from unauthorized Origin: ${origin}`);
-    socket.write('HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized Origin');
-    socket.destroy();
-    return;
-  }
-
   wss.handleUpgrade(request, socket, head, (ws) => {
     wss.emit('connection', ws, request);
   });
@@ -286,9 +177,9 @@ function send(ws, data) {
 }
 
 function relayToPeer(roomCode, senderWs, data) {
-  const roomData = rooms.get(roomCode);
-  if (!roomData) return;
-  for (const client of roomData.peers) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  for (const client of room) {
     if (client !== senderWs && client.readyState === WebSocket.OPEN) {
       send(client, data);
     }
@@ -299,15 +190,15 @@ function leaveRoom(ws) {
   if (!ws.roomCode) return;
 
   const roomCode = ws.roomCode;
-  const roomData = rooms.get(roomCode);
+  const room = rooms.get(roomCode);
 
-  if (roomData) {
-    roomData.peers.delete(ws);
+  if (room) {
+    room.delete(ws);
     relayToPeer(roomCode, ws, { type: 'peer-left' });
-    touchRoomActivity(roomCode);
 
-    if (roomData.peers.size === 0) {
+    if (room.size === 0) {
       rooms.delete(roomCode);
+      roomTimestamps.delete(roomCode);
     }
   }
 
@@ -317,19 +208,20 @@ function leaveRoom(ws) {
 wss.on('connection', (ws, req) => {
   ws.isAlive = true;
   ws.roomCode = null;
-  ws.peerToken = null;
   ws.msgCount = 0;
   ws.msgResetTime = Date.now() + 60000;
-  const clientIp = getClientIp(req);
+  const clientIp = (req.socket && req.socket.remoteAddress) || '127.0.0.1';
 
   ws.on('pong', () => { ws.isAlive = true; });
 
   ws.on('message', (rawMessage) => {
+    // 1. Message size check
     if (Buffer.byteLength(rawMessage) > MAX_MESSAGE_SIZE_BYTES) {
       send(ws, { type: 'error', message: 'Payload size limit exceeded' });
       return;
     }
 
+    // 2. Per-socket message rate limit check
     const now = Date.now();
     if (now > ws.msgResetTime) {
       ws.msgCount = 1;
@@ -342,6 +234,7 @@ wss.on('connection', (ws, req) => {
       }
     }
 
+    // 3. Schema validation & handling
     try {
       const message = JSON.parse(rawMessage.toString());
       if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
@@ -349,7 +242,7 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      const { type, room, peerToken: msgPeerToken, offer, answer, candidate } = message;
+      const { type, room, offer, answer, candidate } = message;
 
       switch (type) {
         case 'join-room': {
@@ -364,58 +257,40 @@ wss.on('connection', (ws, req) => {
           }
 
           const cleanRoom = room.trim();
-          const token = (typeof msgPeerToken === 'string' && msgPeerToken.trim())
-            ? msgPeerToken.trim()
-            : (ws.peerToken || generateSecurePeerToken());
-          ws.peerToken = token;
 
           if (ws.roomCode && ws.roomCode !== cleanRoom) {
             leaveRoom(ws);
           }
 
           if (!rooms.has(cleanRoom)) {
-            rooms.set(cleanRoom, {
-              peers: new Set(),
-              roles: new Map(),
-              lastActivityTime: Date.now()
-            });
+            rooms.set(cleanRoom, new Set());
+            roomTimestamps.set(cleanRoom, Date.now());
           }
 
-          const roomData = rooms.get(cleanRoom);
-          roomData.lastActivityTime = Date.now();
+          const targetRoom = rooms.get(cleanRoom);
 
-          if (roomData.peers.has(ws)) {
-            const role = roomData.roles.get(token) || (roomData.peers.size === 1 ? 'initiator' : 'joiner');
-            send(ws, { type: 'joined', room: cleanRoom, role, peerPresent: roomData.peers.size === 2 });
+          if (targetRoom.has(ws)) {
+            send(ws, { type: 'joined', room: cleanRoom, role: targetRoom.size === 1 ? 'initiator' : 'joiner' });
             return;
           }
 
-          if (roomData.peers.size >= 2) {
+          if (targetRoom.size >= 2) {
             send(ws, { type: 'room-full', room: cleanRoom });
             return;
           }
 
-          // Stable Role Model
-          let assignedRole;
-          if (roomData.roles.has(token)) {
-            assignedRole = roomData.roles.get(token);
-          } else {
-            const hasInitiator = Array.from(roomData.roles.values()).includes('initiator');
-            assignedRole = !hasInitiator ? 'initiator' : 'joiner';
-            roomData.roles.set(token, assignedRole);
-          }
-
-          roomData.peers.add(ws);
+          targetRoom.add(ws);
           ws.roomCode = cleanRoom;
 
+          const isInitiator = targetRoom.size === 1;
           send(ws, {
             type: 'joined',
             room: cleanRoom,
-            role: assignedRole,
-            peerPresent: roomData.peers.size === 2
+            role: isInitiator ? 'initiator' : 'joiner',
+            peerPresent: targetRoom.size === 2
           });
 
-          if (roomData.peers.size === 2) {
+          if (targetRoom.size === 2) {
             relayToPeer(cleanRoom, ws, { type: 'peer-joined' });
           }
           break;
@@ -427,7 +302,6 @@ wss.on('connection', (ws, req) => {
             send(ws, { type: 'error', message: 'Invalid offer schema' });
             return;
           }
-          touchRoomActivity(ws.roomCode);
           relayToPeer(ws.roomCode, ws, { type: 'offer', offer });
           break;
         }
@@ -438,7 +312,6 @@ wss.on('connection', (ws, req) => {
             send(ws, { type: 'error', message: 'Invalid answer schema' });
             return;
           }
-          touchRoomActivity(ws.roomCode);
           relayToPeer(ws.roomCode, ws, { type: 'answer', answer });
           break;
         }
@@ -446,7 +319,6 @@ wss.on('connection', (ws, req) => {
         case 'ice-candidate': {
           if (!ws.roomCode) return;
           if (!candidate || typeof candidate !== 'object') return;
-          touchRoomActivity(ws.roomCode);
           relayToPeer(ws.roomCode, ws, { type: 'ice-candidate', candidate });
           break;
         }
@@ -469,17 +341,22 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => { leaveRoom(ws); });
 });
 
-// ─── Heartbeat & Activity-Based Stale Room Cleanup ─────────────────────────────
+// ─── Heartbeat & Stale Room Cleanup ─────────────────────────────────────────
 const pingInterval = setInterval(() => {
   const now = Date.now();
 
-  rooms.forEach((roomData, roomCode) => {
-    if (now - roomData.lastActivityTime > ROOM_INACTIVITY_TIMEOUT_MS) {
-      roomData.peers.forEach(client => {
-        send(client, { type: 'error', message: 'Room signaling session expired due to inactivity' });
-        leaveRoom(client);
-      });
+  // Cleanup inactive rooms (> 15 mins)
+  roomTimestamps.forEach((createdTime, roomCode) => {
+    if (now - createdTime > 15 * 60 * 1000) {
+      const room = rooms.get(roomCode);
+      if (room) {
+        room.forEach(client => {
+          send(client, { type: 'error', message: 'Room session expired' });
+          leaveRoom(client);
+        });
+      }
       rooms.delete(roomCode);
+      roomTimestamps.delete(roomCode);
     }
   });
 
@@ -493,88 +370,12 @@ const pingInterval = setInterval(() => {
   });
 }, 30000);
 
-const ipRateLimitCleanupTimer = setInterval(() => {
-  cleanupExpiredIpRateLimits();
-}, 10 * 60 * 1000);
+wss.on('close', () => clearInterval(pingInterval));
 
-wss.on('close', () => {
-  clearInterval(pingInterval);
-  clearInterval(ipRateLimitCleanupTimer);
+// ─── Start ────────────────────────────────────────────────────────────────────
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🚀 FluxTransfer running on http://0.0.0.0:${PORT}`);
+  console.log(`📡 WebSocket signaling ready on port ${PORT}`);
+  console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
 });
 
-// ─── Graceful Shutdown ────────────────────────────────────────────────────────
-function shutdownServer(reason = 'SIGTERM', timeoutMs = 5000) {
-  if (isShuttingDown) {
-    return Promise.resolve(false);
-  }
-  isShuttingDown = true;
-  console.log(`\n🛑 [Signaling Server] Graceful shutdown initiated (${reason})...`);
-
-  // Stop background timers
-  clearInterval(pingInterval);
-  clearInterval(ipRateLimitCleanupTimer);
-
-  // Close connected WebSocket clients cleanly with 1001 (Going Away) status
-  wss.clients.forEach((ws) => {
-    try {
-      send(ws, { type: 'error', message: 'Signaling server shutting down' });
-      ws.close(1001, 'Server shutting down');
-    } catch (_) {}
-  });
-
-  return new Promise((resolve) => {
-    forceShutdownTimer = setTimeout(() => {
-      console.warn('⚠️ [Signaling Server] Shutdown safety timeout reached.');
-      if (require.main === module) process.exit(1);
-      resolve(true);
-    }, timeoutMs);
-
-    wss.close(() => {
-      server.close(() => {
-        if (forceShutdownTimer) clearTimeout(forceShutdownTimer);
-        console.log('✅ [Signaling Server] Clean shutdown complete.');
-        if (require.main === module) process.exit(0);
-        resolve(true);
-      });
-    });
-  });
-}
-
-// ─── Process Signal & Exception Handlers ─────────────────────────────────────
-if (require.main === module) {
-  process.on('SIGTERM', () => shutdownServer('SIGTERM'));
-  process.on('SIGINT', () => shutdownServer('SIGINT'));
-
-  process.on('uncaughtException', (err) => {
-    console.error('💥 [Signaling Server] Uncaught Exception:', err);
-    shutdownServer('uncaughtException', 3000);
-  });
-
-  process.on('unhandledRejection', (reason) => {
-    console.error('💥 [Signaling Server] Unhandled Promise Rejection:', reason);
-    shutdownServer('unhandledRejection', 3000);
-  });
-
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 FluxTransfer running on http://0.0.0.0:${PORT}`);
-    console.log(`📡 WebSocket signaling ready on port ${PORT}`);
-    console.log(`📁 Serving static files from: ${STATIC_DIR}\n`);
-  });
-}
-
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {
-    server,
-    wss,
-    rooms,
-    ipRateLimits,
-    checkIpRateLimit,
-    cleanupExpiredIpRateLimits,
-    getClientIp,
-    getSecurityHeaders,
-    isOriginAllowed,
-    getAllowedOrigins,
-    shutdownServer,
-    generateSecurePeerToken
-  };
-}

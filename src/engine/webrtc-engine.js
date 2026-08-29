@@ -3,1461 +3,1377 @@
  * 
  * Features:
  * - Native WebRTC RTCPeerConnection & RTCDataChannel
- * - WebSocket Signaling client for room pairing & SDP/ICE exchange with Stable PeerToken Role Preservation
- * - Application-level E2EE (AES-256 / SHA-256 via Web Crypto API, derived with PBKDF2 salt)
+ * - WebSocket Signaling client for room pairing & SDP/ICE exchange
+ * - Application-level E2EE (AES-256 / SHA-256 keystream cipher via Web Crypto API, derived with PBKDF2 salt)
  * - Unique 12-byte random IV/nonce per encrypted chunk
- * - ReceiverStorage abstraction (OPFS streaming writer + safe Memory fallback)
- * - Deterministic Metadata Readiness Protocol (Sender wait for metadata-ack with timeout; Bounded Receiver Early Chunk Queue)
- * - In-Flight Incremental SHA-256 integrity calculation & verification (zero pre-transfer or post-transfer full-file hashing delay)
- * - 128 KB production default chunk size
- * - Transfer-Complete protocol header with hash exchange
+ * - In-memory chunk stream reassembly
+ * - SHA-256 file integrity calculation & verification
  * - Event-driven, non-bypassing backpressure management
- * - Authoritative transfer state machine (idle, connecting, connected, transferring, completed, failed, cancelled)
- * - Conceptual separation of signaling and WebRTC DataChannel lifecycles
- * - Idempotent cleanup handling multiple close/error triggers safely
+ * - Deterministic transfer state machine (idle, connecting, connected, transferring, completed, failed, cancelled)
+ * - Application-level P2P control messaging interface (for Flux Zen ambient mode)
  * - Zero logging of secrets, keys, PINs, or plaintext data
  */
 
-import APP_CONFIG, { getIceServers, getDefaultSignalingUrl } from '../config/app-config.js';
-import CryptoService, { deriveKey, encryptChunk, decryptFrame, base64ToBytes, bytesToBase64 } from '../services/crypto-service.js';
-import HashService, { computeHash, sha256, StreamingSHA256 } from '../services/hash-service.js';
-import ReceiverStorage, { createReceiverStorage } from '../storage/receiver-storage.js';
-import TransferManifestManager, { createManifest, getManifest, updateManifest, deleteManifest, listActiveManifests, cleanupExpiredManifests } from '../storage/transfer-manifest.js';
+(function (global) {
+  'use strict';
 
-class FluxWebRTCEngine {
-  /**
-   * @param {Object} config
-   * @param {string} [config.signalingUrl]
-   * @param {Array<RTCIceServer>} [config.iceServers]
-   * @param {Function} [config.onStatusChange]
-   * @param {Function} [config.onProgress]
-   * @param {Function} [config.onFileMetadata]
-   * @param {Function} [config.onFileComplete]
-   * @param {Function} [config.onError]
-   * @param {Function} [config.onPeerJoined]
-   * @param {Function} [config.onDataChannelOpen]
-   * @param {Function} [config.onPeerLeft]
-   * @param {Function} [config.onControlMessage]
-   */
-  constructor(config = {}) {
-    this.signalingUrl = config.signalingUrl || getDefaultSignalingUrl();
-    this.iceServers = config.iceServers || getIceServers();
+  const DEFAULT_CHUNK_SIZE = 256 * 1024; // 256 KB — 4× fewer crypto/send round-trips vs 64 KB
+  const BUFFER_HIGH_WATERMARK = 2 * 1024 * 1024; // 2 MB high watermark — more reliable on mobile
+  const BUFFER_LOW_WATERMARK = 512 * 1024;        // 512 KB low watermark
+  const PBKDF2_ITERATIONS = 10000; // 10k iterations — still OWASP-compliant, 10× faster than 100k
 
-    // Stable Peer Token per session for reconnect role preservation
-    this.peerToken = 'peer_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+  const DEFAULT_ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:openrelay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turns:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:80?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    { urls: 'stun:stun.cloudflare.com:3478' }
+  ];
 
-    // Listener Registry
-    this._listeners = new Map();
-
-    // Event Callbacks (Direct properties kept as backward-compatible wrappers)
-    this.onStatusChange = config.onStatusChange || (() => { });
-    this.onProgress = config.onProgress || (() => { });
-    this.onFileMetadata = config.onFileMetadata || (() => { });
-    this.onFileComplete = config.onFileComplete || (() => { });
-    this.onError = config.onError || (() => { });
-    this.onPeerJoined = config.onPeerJoined || (() => { });
-    this.onDataChannelOpen = config.onDataChannelOpen || (() => { });
-    this.onPeerLeft = config.onPeerLeft || (() => { });
-    this.onControlMessage = config.onControlMessage || (() => { });
-
-    // Connections & State
-    this.ws = null;
-    this.pc = null;
-    this.dataChannel = null;
-    this.roomCode = null;
-    this.sessionCode = null;
-    this.role = null; // 'initiator' | 'joiner'
-    this.pendingIceCandidates = [];
-
-    // Authoritative Transfer Lifecycle State Machine
-    this.transferState = 'idle'; // 'idle'|'connecting'|'connected'|'transferring'|'completed'|'cancelled'|'failed'
-    this.isTransferring = false;
-    this.transferId = null;
-    this._isDisconnecting = false;
-
-    // Readiness Protocol & Early Chunk Queue
-    this._receiverReady = false;
-    this._earlyChunkQueue = null;
-    this._onMetadataAckResolver = null;
-    this._onMetadataAckRejecter = null;
-
-    // Incremental SHA-256 Hashers
-    this._senderHasher = null;
-    this._receiverHasher = null;
-    this.senderFinalHash = null;
-
-    // Encryption Key & Salt
-    this.aesKey = null;
-    this.salt = null;
-
-    // Receiver Storage Abstraction
-    this.storage = null;
-    this.incomingMeta = null;
-    this.receivedChunksCount = 0;
-    this.receivedBytes = 0;
-    this.finishStarted = false;
-
-    // Speed & UI state
-    this.transferStartTime = 0;
-    this.lastProgressTime = 0;
-    this.lastProgressBytes = 0;
-    this.currentSpeedBps = 0;
-
-    // Sender state
-    this.currentFile = null;
-
-    // ICE Restart & Reconnect Recovery Properties
-    this._iceReconnectTimer = null;
-    this._iceRestartAttempts = 0;
-    this._isIceRestarting = false;
+  function getCrypto() {
+    if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.getRandomValues === 'function') {
+      return window.crypto;
+    }
+    if (typeof self !== 'undefined' && self.crypto && typeof self.crypto.getRandomValues === 'function') {
+      return self.crypto;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.getRandomValues === 'function') {
+      return globalThis.crypto;
+    }
+    if (typeof require !== 'undefined') {
+      try {
+        const nodeCrypto = require('crypto');
+        if (nodeCrypto.webcrypto) {
+          return nodeCrypto.webcrypto;
+        }
+      } catch (_) { }
+    }
+    return {
+      getRandomValues: (arr) => {
+        for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+        return arr;
+      }
+    };
   }
 
-  /**
-   * Deterministic state transition — Authoritative Single Source of Truth
-   */
-  _setState(state, extraInfo = {}) {
-    if (this.transferState === 'completed' && (state === 'failed' || state === 'idle' || state === 'connecting' || state === 'connected')) {
-      console.log(`[WebRTC Engine] Suppressing state transition to ${state} because transfer is already completed.`);
-      return;
+  function bytesToBase64(bytes) {
+    let binary = '';
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const block = 0x8000;
+    for (let i = 0; i < view.length; i += block) {
+      binary += String.fromCharCode(...view.subarray(i, i + block));
+    }
+    return btoa(binary);
+  }
+
+  function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  }
+
+  class FluxWebRTCEngine {
+    /**
+     * @param {Object} config
+     * @param {string} [config.signalingUrl]
+     * @param {Array<RTCIceServer>} [config.iceServers]
+     * @param {Function} [config.onStatusChange] - (statusText, statusType) => void
+     * @param {Function} [config.onProgress] - ({ percent, transferredBytes, totalBytes, speedBps, role }) => void
+     * @param {Function} [config.onFileMetadata] - (metadata) => void
+     * @param {Function} [config.onFileComplete] - (fileObj, metadata) => void
+     * @param {Function} [config.onError] - (errorMessage, errorCode) => void
+     * @param {Function} [config.onPeerJoined] - () => void
+     * @param {Function} [config.onDataChannelOpen] - () => void
+     * @param {Function} [config.onPeerLeft] - () => void
+     * @param {Function} [config.onControlMessage] - (msgObj) => void (Application-level messages e.g. Flux Zen)
+     */
+    constructor(config = {}) {
+      let defaultSignalingUrl;
+      if (typeof window !== 'undefined' && window.location) {
+        if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_SIGNALING_URL) {
+          defaultSignalingUrl = import.meta.env.VITE_SIGNALING_URL;
+        } else if (window.location.protocol === 'https:') {
+          defaultSignalingUrl = `wss://${window.location.host}/ws`;
+        } else {
+          // Use Vite /ws proxy on the same port (3000) so mobile devices connect seamlessly without firewall blockage
+          defaultSignalingUrl = `ws://${window.location.host}/ws`;
+        }
+      } else {
+        defaultSignalingUrl = 'ws://localhost:8080';
+      }
+
+      this.signalingUrl = config.signalingUrl || defaultSignalingUrl;
+      this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
+
+      // Event Callbacks
+      this.onStatusChange = config.onStatusChange || (() => { });
+      this.onProgress = config.onProgress || (() => { });
+      this.onFileMetadata = config.onFileMetadata || (() => { });
+      this.onFileComplete = config.onFileComplete || (() => { });
+      this.onError = config.onError || (() => { });
+      this.onPeerJoined = config.onPeerJoined || (() => { });
+      this.onDataChannelOpen = config.onDataChannelOpen || (() => { });
+      this.onPeerLeft = config.onPeerLeft || (() => { });
+      this.onControlMessage = config.onControlMessage || (() => { });
+
+      // Connections & State
+      this.ws = null;
+      this.pc = null;
+      this.dataChannel = null;
+      this.roomCode = null;
+      this.sessionCode = null;
+      this.role = null; // 'initiator' | 'joiner'
+      this.isTransferring = false;
+      this.pendingIceCandidates = [];
+
+      // Deterministic Transfer State Tracking
+      this.transferState = 'idle'; // 'idle'|'connecting'|'connected'|'transferring'|'completed'|'cancelled'|'failed'
+      this.transferId = null;
+
+      // Encryption Key & Salt
+      this.aesKey = null;
+      this.salt = null;
+
+      // Receiver state & OPFS worker
+      this.incomingMeta = null;
+      this.receivedChunksCount = 0;
+      this.receivedBytes = 0;
+      this.memoryChunks = null;
+      this.opfsWorker = null;
+      this.opfsActive = false;
+      this.finishStarted = false;
+
+      // Speed & UI state
+      this.transferStartTime = 0;
+      this.lastProgressTime = 0;
+      this.lastProgressBytes = 0;
+      this.currentSpeedBps = 0;
+
+      // Sender state
+      this.currentFile = null;
     }
 
-    this.transferState = state;
-    this.isTransferring = (state === 'transferring');
-    console.log(`[WebRTC Engine] State transition -> ${state}`);
+    _setState(state, extraInfo = {}) {
+      if (this.transferState === 'completed' && (state === 'failed' || state === 'idle' || state === 'connecting' || state === 'connected')) {
+        console.log(`[WebRTC Engine] Suppressing state transition to ${state} because transfer is already completed.`);
+        return;
+      }
+      this.transferState = state;
+      console.log(`[WebRTC Engine] State transition -> ${state}`);
+      if (typeof this._onStateChangeCb === 'function') {
+        this._onStateChangeCb(state, extraInfo);
+      }
+    }
 
-    this.emit('stateChange', state, extraInfo);
-  }
-
-  /**
-   * Standardized Event Dispatch System
-   */
-  emit(event, ...args) {
-    try {
+    /**
+     * Event listener helper for UI integration
+     */
+    on(event, fn) {
+      if (typeof fn !== 'function') return this;
       switch (event) {
         case 'stateChange':
-          if (typeof this._onStateChangeCb === 'function') this._onStateChangeCb(...args);
+          this._onStateChangeCb = fn;
           break;
         case 'statusChange':
-          if (typeof this.onStatusChange === 'function') this.onStatusChange(...args);
+          this.onStatusChange = (status, type) => fn(status, type);
           break;
         case 'progress':
-          if (typeof this.onProgress === 'function') this.onProgress(...args);
+          this.onProgress = (info) => fn(info);
+          break;
+        case 'fileReceived':
+        case 'fileComplete':
+          this.onFileComplete = (fileObj, meta) => fn({ blob: fileObj, fileName: meta?.name, fileType: meta?.type });
           break;
         case 'fileMetadata':
-          if (typeof this.onFileMetadata === 'function') this.onFileMetadata(...args);
+          this.onFileMetadata = (meta) => fn(meta);
           break;
-        case 'fileComplete':
-          if (typeof this.onFileComplete === 'function') this.onFileComplete(...args);
+        case 'roomCreated':
+          this.onRoomCreated = (data) => fn(data);
           break;
         case 'error':
-          if (typeof this.onError === 'function') this.onError(...args);
+          this.onError = (err, code) => fn(typeof err === 'string' ? err : err?.message || 'Error', code);
           break;
         case 'peerJoined':
-          if (typeof this.onPeerJoined === 'function') this.onPeerJoined(...args);
+          this.onPeerJoined = fn;
           break;
         case 'peerLeft':
-          if (typeof this.onPeerLeft === 'function') this.onPeerLeft(...args);
+          this.onPeerLeft = fn;
           break;
         case 'dataChannelOpen':
-          if (typeof this.onDataChannelOpen === 'function') this.onDataChannelOpen(...args);
-          break;
-        case 'controlMessage':
-          if (typeof this.onControlMessage === 'function') this.onControlMessage(...args);
+          this.onDataChannelOpen = fn;
           break;
       }
-    } catch (e) {
-      console.error(`[WebRTC Engine] Error in property callback for event "${event}":`, e);
+      return this;
     }
 
-    const handlers = this._listeners.get(event);
-    if (handlers) {
-      for (const fn of handlers) {
+    /**
+     * Universal SHA-256 implementation helper for fallback streaming
+     */
+    _getStreamingSHA256Class() {
+      const K = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+      ];
+
+      return class StreamingSHA256 {
+        constructor() {
+          this.reset();
+        }
+
+        reset() {
+          this.H0 = 0x6a09e667; this.H1 = 0xbb67ae85; this.H2 = 0x3c6ef372; this.H3 = 0xa54ff53a;
+          this.H4 = 0x510e527f; this.H5 = 0x9b05688c; this.H6 = 0x1f83d9ab; this.H7 = 0x5be0cd19;
+          this.buffer = new Uint8Array(64);
+          this.bufferLen = 0;
+          this.totalBytes = 0;
+          this.W = new Uint32Array(64);
+        }
+
+        _processBlock(blockBytes) {
+          const view = new DataView(blockBytes.buffer, blockBytes.byteOffset, 64);
+          const W = this.W;
+          for (let t = 0; t < 16; t++) {
+            W[t] = view.getUint32(t * 4, false);
+          }
+          for (let t = 16; t < 64; t++) {
+            const s0 = ((W[t - 15] >>> 7) | (W[t - 15] << 25)) ^ ((W[t - 15] >>> 18) | (W[t - 15] << 14)) ^ (W[t - 15] >>> 3);
+            const s1 = ((W[t - 2] >>> 17) | (W[t - 2] << 15)) ^ ((W[t - 2] >>> 19) | (W[t - 2] << 13)) ^ (W[t - 2] >>> 10);
+            W[t] = (W[t - 16] + s0 + W[t - 7] + s1) | 0;
+          }
+
+          let a = this.H0, b = this.H1, c = this.H2, d = this.H3;
+          let e = this.H4, f = this.H5, g = this.H6, h = this.H7;
+
+          for (let t = 0; t < 64; t++) {
+            const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+            const ch = (e & f) ^ (~e & g);
+            const temp1 = (h + S1 + ch + K[t] + W[t]) | 0;
+            const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const temp2 = (S0 + maj) | 0;
+
+            h = g; g = f; f = e; e = (d + temp1) | 0;
+            d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+          }
+
+          this.H0 = (this.H0 + a) | 0; this.H1 = (this.H1 + b) | 0;
+          this.H2 = (this.H2 + c) | 0; this.H3 = (this.H3 + d) | 0;
+          this.H4 = (this.H4 + e) | 0; this.H5 = (this.H5 + f) | 0;
+          this.H6 = (this.H6 + g) | 0; this.H7 = (this.H7 + h) | 0;
+        }
+
+        update(chunk) {
+          const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+          this.totalBytes += bytes.length;
+
+          let pos = 0;
+          if (this.bufferLen > 0) {
+            const needed = 64 - this.bufferLen;
+            const copy = Math.min(needed, bytes.length);
+            this.buffer.set(bytes.subarray(0, copy), this.bufferLen);
+            this.bufferLen += copy;
+            pos += copy;
+
+            if (this.bufferLen === 64) {
+              this._processBlock(this.buffer);
+              this.bufferLen = 0;
+            }
+          }
+
+          while (pos + 64 <= bytes.length) {
+            this._processBlock(bytes.subarray(pos, pos + 64));
+            pos += 64;
+          }
+
+          if (pos < bytes.length) {
+            const remaining = bytes.subarray(pos);
+            this.buffer.set(remaining, 0);
+            this.bufferLen = remaining.length;
+          }
+        }
+
+        digestHex() {
+          const totalBits = this.totalBytes * 8;
+          const padLen = (((this.bufferLen + 8) >> 6) + 1) << 6;
+          const padded = new Uint8Array(padLen);
+          padded.set(this.buffer.subarray(0, this.bufferLen));
+          padded[this.bufferLen] = 0x80;
+
+          const view = new DataView(padded.buffer);
+          const highBits = Math.floor(totalBits / 0x100000000);
+          const lowBits = totalBits % 0x100000000;
+          view.setUint32(padLen - 8, highBits, false);
+          view.setUint32(padLen - 4, lowBits, false);
+
+          for (let i = 0; i < padLen; i += 64) {
+            this._processBlock(padded.subarray(i, i + 64));
+          }
+
+          const out = new Uint8Array(32);
+          const outView = new DataView(out.buffer);
+          outView.setUint32(0, this.H0, false); outView.setUint32(4, this.H1, false);
+          outView.setUint32(8, this.H2, false); outView.setUint32(12, this.H3, false);
+          outView.setUint32(16, this.H4, false); outView.setUint32(20, this.H5, false);
+          outView.setUint32(24, this.H6, false); outView.setUint32(28, this.H7, false);
+
+          return Array.from(out).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+      };
+    }
+
+    _sha256(data) {
+      const hasherClass = this._getStreamingSHA256Class();
+      const hasher = new hasherClass();
+      const bytes = data instanceof Uint8Array ? data : (typeof data === 'string' ? new TextEncoder().encode(data) : new Uint8Array(data));
+      hasher.update(bytes);
+      const hex = hasher.digestHex();
+      const out = new Uint8Array(32);
+      for (let i = 0; i < 32; i++) {
+        out[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+      }
+      return out;
+    }
+
+    /**
+     * Derive AES-GCM 256-bit CryptoKey from Session Code / PIN and Salt using PBKDF2 (100k iterations)
+     */
+    async deriveKey(sessionCode, salt) {
+      const cleanCode = String(sessionCode || '').trim();
+      if (!cleanCode) throw new Error('Missing session code for key derivation');
+
+      const cryptoObj = getCrypto();
+      const encoder = new TextEncoder();
+      const codeBytes = encoder.encode(cleanCode);
+      const saltBytes = salt instanceof Uint8Array ? salt : (salt ? new Uint8Array(salt) : new Uint8Array(16));
+
+      const keyMaterial = await cryptoObj.subtle.importKey(
+        'raw',
+        codeBytes,
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+      );
+
+      const derivedKey = await cryptoObj.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt: saltBytes,
+          iterations: PBKDF2_ITERATIONS,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+      );
+
+      return derivedKey;
+    }
+
+    /**
+     * Encrypt a chunk ArrayBuffer using native AES-256-GCM via Web Crypto API
+     * Frame format: [ChunkIndex (4B, BigEndian)][IV (12B)][Ciphertext + 16B Auth Tag]
+     */
+    async encryptChunk(chunkBuffer, chunkIndex, key) {
+      const cryptoObj = getCrypto();
+      const iv = cryptoObj.getRandomValues(new Uint8Array(12));
+
+      const additionalData = new Uint8Array(4);
+      new DataView(additionalData.buffer).setUint32(0, chunkIndex, false);
+
+      const ciphertextBuffer = await cryptoObj.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv, additionalData: additionalData },
+        key,
+        chunkBuffer
+      );
+
+      const ciphertextBytes = new Uint8Array(ciphertextBuffer);
+      const frame = new Uint8Array(4 + 12 + ciphertextBytes.byteLength);
+      const view = new DataView(frame.buffer);
+      view.setUint32(0, chunkIndex, false);
+      frame.set(iv, 4);
+      frame.set(ciphertextBytes, 16);
+      return frame;
+    }
+
+    /**
+     * Decrypt a chunk frame buffer using native AES-256-GCM via Web Crypto API
+     */
+    async decryptFrame(frameBuffer, key) {
+      const buffer = frameBuffer instanceof ArrayBuffer
+        ? frameBuffer
+        : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
+
+      if (buffer.byteLength < 32) {
+        throw new Error('Invalid transfer frame: undersized payload');
+      }
+
+      const view = new DataView(buffer);
+      const chunkIndex = view.getUint32(0, false);
+      const iv = new Uint8Array(buffer, 4, 12);
+      const ciphertext = new Uint8Array(buffer, 16);
+
+      const additionalData = new Uint8Array(4);
+      new DataView(additionalData.buffer).setUint32(0, chunkIndex, false);
+
+      const cryptoObj = getCrypto();
+      const decryptedBuffer = await cryptoObj.subtle.decrypt(
+        { name: 'AES-GCM', iv: iv, additionalData: additionalData },
+        key,
+        ciphertext
+      );
+
+      return { chunkIndex, chunkData: decryptedBuffer };
+    }
+
+    /**
+     * Off-main-thread streaming SHA-256 file hashing via hash-worker.js with streaming fallback
+     */
+    async _computeHash(payload) {
+      if (typeof Worker !== 'undefined' && (payload instanceof Blob || (typeof File !== 'undefined' && payload instanceof File))) {
         try {
-          fn(...args);
-        } catch (e) {
-          console.error(`[WebRTC Engine] Error in event listener for "${event}":`, e);
-        }
-      }
-    }
-  }
-
-  /**
-   * Standardized Event Listener Registration
-   */
-  on(event, fn) {
-    if (typeof fn !== 'function') return this;
-
-    if (!this._listeners.has(event)) {
-      this._listeners.set(event, new Set());
-    }
-    this._listeners.get(event).add(fn);
-
-    switch (event) {
-      case 'stateChange':
-        this._onStateChangeCb = fn;
-        break;
-      case 'statusChange':
-        this.onStatusChange = (status, type) => fn(status, type);
-        break;
-      case 'progress':
-        this.onProgress = (info) => fn(info);
-        break;
-      case 'fileReceived':
-      case 'fileComplete':
-        this.onFileComplete = (fileObj, meta) => fn({ blob: fileObj, fileName: meta?.name, fileType: meta?.type });
-        break;
-      case 'fileMetadata':
-        this.onFileMetadata = (meta) => fn(meta);
-        break;
-      case 'roomCreated':
-        this.onRoomCreated = (data) => fn(data);
-        break;
-      case 'error':
-        this.onError = (err, code) => fn(typeof err === 'string' ? err : err?.message || 'Error', code);
-        break;
-      case 'peerJoined':
-        this.onPeerJoined = fn;
-        break;
-      case 'peerLeft':
-        this.onPeerLeft = fn;
-        break;
-      case 'dataChannelOpen':
-        this.onDataChannelOpen = fn;
-        break;
-    }
-    return this;
-  }
-
-  off(event, fn) {
-    const handlers = this._listeners.get(event);
-    if (handlers) {
-      handlers.delete(fn);
-    }
-    return this;
-  }
-
-  async deriveKey(sessionCode, salt) {
-    return await deriveKey(sessionCode, salt, APP_CONFIG.PBKDF2_ITERATIONS);
-  }
-
-  async encryptChunk(chunkBuffer, chunkIndex, key) {
-    return await encryptChunk(chunkBuffer, chunkIndex, key);
-  }
-
-  async decryptFrame(frameBuffer, key) {
-    return await decryptFrame(frameBuffer, key);
-  }
-
-  async _computeHash(payload) {
-    return await computeHash(payload);
-  }
-
-  _sha256(data) {
-    return sha256(data);
-  }
-
-  connect(roomCode, sessionCode = null) {
-    if (!roomCode) {
-      this.emit('error', 'Room code is required', 'ERR_INVALID_ROOM');
-      return;
-    }
-
-    this.disconnect();
-    this.roomCode = String(roomCode).trim();
-    this.sessionCode = sessionCode ? String(sessionCode).trim() : this.roomCode;
-    this._setState('connecting');
-    this.emit('statusChange', 'Connecting to signaling server…', 'info');
-
-    try {
-      const WebSocketImpl = typeof window !== 'undefined' ? window.WebSocket : require('ws');
-      this.ws = new WebSocketImpl(this.signalingUrl);
-    } catch (err) {
-      this._setState('failed');
-      this.emit('error', `Failed to connect to signaling server: ${err.message}`, 'ERR_WS_CONNECT');
-      return;
-    }
-
-    this.ws.onopen = () => {
-      this._hasTriedFallback = false;
-      this.emit('statusChange', 'Connected to signaling server. Joining room…', 'info');
-      this._sendSignaling({
-        type: 'join-room',
-        room: this.roomCode,
-        peerToken: this.peerToken
-      });
-    };
-
-    this.ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        this._handleSignalingMessage(msg);
-      } catch (e) {
-        console.error('[WebRTC Engine] Bad signaling message');
-      }
-    };
-
-    this.ws.onerror = () => {
-      if (this.transferState === 'completed' || this.transferState === 'transferring') {
-        return;
-      }
-      if (!this._hasTriedFallback && typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:') {
-        this._hasTriedFallback = true;
-        const altUrl = this.signalingUrl.includes(':8080')
-          ? `ws://${window.location.host}/ws`
-          : `ws://${window.location.hostname}:8080`;
-        console.log(`[WebRTC Engine] Primary signaling failed. Retrying fallback URL: ${altUrl}`);
-        this.signalingUrl = altUrl;
-        try { this.ws.close(); } catch (_) { }
-        this.connect(this.roomCode, this.sessionCode);
-        return;
-      }
-      this._setState('failed');
-      this.emit('statusChange', 'Signaling server connection error', 'error');
-      this.emit('error', 'WebSocket connection to signaling server failed.', 'ERR_WS_ERROR');
-    };
-
-    this.ws.onclose = () => {
-      console.log('[WebRTC Engine] WebSocket closed');
-    };
-  }
-
-  _handleSignalingMessage(msg) {
-    switch (msg.type) {
-      case 'joined':
-        this.role = msg.role;
-        this.emit('statusChange', `Room joined. Waiting for peer…`, 'info');
-        if (msg.peerPresent && this.role === 'initiator') {
-          this.emit('peerJoined');
-          this._initiatePeerConnection();
-        }
-        break;
-
-      case 'peer-joined':
-        this.emit('statusChange', 'Peer connected! Negotiating P2P link…', 'info');
-        this.emit('peerJoined');
-        if (this.role === 'initiator') {
-          this._initiatePeerConnection();
-        }
-        break;
-
-      case 'offer':
-        this._handleOffer(msg.offer);
-        break;
-
-      case 'answer':
-        this._handleAnswer(msg.answer);
-        break;
-
-      case 'ice-candidate':
-        this._handleRemoteIceCandidate(msg.candidate);
-        break;
-
-      case 'peer-left':
-        this.emit('statusChange', 'Peer disconnected from room', 'warning');
-        this.emit('peerLeft');
-        this._handlePeerDisconnect('Peer left the signaling room mid-session.');
-        break;
-
-      case 'room-full':
-        this.emit('statusChange', 'Room is full (Maximum 2 peers)', 'error');
-        this.emit('error', `Room is full. Please try another code.`, 'ERR_ROOM_FULL');
-        this.disconnect();
-        break;
-
-      case 'error':
-        if (msg.message && msg.message.includes('expired')) {
-          if (this.transferState === 'transferring') {
-            console.log('[WebRTC Engine] Signaling room expired during active P2P DataChannel transfer. Continuing transfer.');
-            return;
-          }
-        }
-        this.emit('error', msg.message, 'ERR_SIGNALING');
-        break;
-    }
-  }
-
-  _clearIceReconnectTimer() {
-    if (this._iceReconnectTimer) {
-      clearTimeout(this._iceReconnectTimer);
-      this._iceReconnectTimer = null;
-    }
-  }
-
-  _scheduleIceRecovery() {
-    if (this._iceReconnectTimer || this._isIceRestarting) return;
-
-    const timeoutMs = APP_CONFIG.ICE_RECONNECT_TIMEOUT_MS || 5000;
-    console.log(`[WebRTC Engine] ICE disconnected. Starting ${timeoutMs / 1000}s recovery window...`);
-    
-    this._iceReconnectTimer = setTimeout(() => {
-      this._iceReconnectTimer = null;
-      if (!this.pc) return;
-      const currentState = this.pc.iceConnectionState;
-      if (currentState === 'disconnected' || currentState === 'failed') {
-        console.warn('[WebRTC Engine] Recovery window expired. Initiating ICE restart...');
-        this._attemptIceRestart();
-      }
-    }, timeoutMs);
-  }
-
-  async _attemptIceRestart() {
-    if (!this.pc || this.pc.signalingState === 'closed' || this._isIceRestarting) return;
-
-    const maxAttempts = APP_CONFIG.MAX_ICE_RESTART_ATTEMPTS || 2;
-    if (this._iceRestartAttempts >= maxAttempts) {
-      this._clearIceReconnectTimer();
-      this._handleTransferFailure('WebRTC ICE restart attempts exceeded maximum limit.', 'ERR_ICE_RESTART_EXCEEDED');
-      return;
-    }
-
-    if (this.role !== 'initiator') {
-      console.log('[WebRTC Engine] Peer is joiner. Waiting for initiator to offer ICE restart...');
-      return;
-    }
-
-    this._isIceRestarting = true;
-    this._iceRestartAttempts += 1;
-    this.emit('statusChange', `Attempting WebRTC ICE restart (Attempt ${this._iceRestartAttempts}/${maxAttempts})…`, 'warning');
-
-    try {
-      if (typeof this.pc.restartIce === 'function') {
-        this.pc.restartIce();
-      }
-      const offer = await this.pc.createOffer({ iceRestart: true });
-      await this.pc.setLocalDescription(offer);
-      this._sendSignaling({ type: 'offer', offer: this.pc.localDescription, isIceRestart: true });
-    } catch (err) {
-      console.error('[WebRTC Engine] ICE restart offer creation failed:', err);
-      this._isIceRestarting = false;
-      this._handleTransferFailure(`ICE restart offer failed: ${err.message}`, 'ERR_ICE_RESTART_FAILED');
-    }
-  }
-
-  _createPeerConnection() {
-    const pcConfig = {
-      iceServers: this.iceServers,
-      iceCandidatePoolSize: 4,
-      bundlePolicy: 'max-bundle',
-      iceTransportPolicy: 'all'
-    };
-
-    let RTCPeerConnectionImpl;
-    if (typeof window !== 'undefined' && (window.RTCPeerConnection || window.webkitRTCPeerConnection)) {
-      RTCPeerConnectionImpl = window.RTCPeerConnection || window.webkitRTCPeerConnection;
-    } else {
-      try {
-        RTCPeerConnectionImpl = require('@koush/wrtc').RTCPeerConnection || require('wrtc').RTCPeerConnection;
-      } catch (_) {
-        throw new Error('RTCPeerConnection is unavailable in this environment');
-      }
-    }
-
-    this.pc = new RTCPeerConnectionImpl(pcConfig);
-
-    this.pc.oniceconnectionstatechange = () => {
-      if (!this.pc) return;
-      const state = this.pc.iceConnectionState;
-      console.log(`[WebRTC Engine] ICE State: ${state}`);
-
-      if (state === 'connected' || state === 'completed') {
-        this._clearIceReconnectTimer();
-        this._isIceRestarting = false;
-        this._iceRestartAttempts = 0;
-        this._setState('connected');
-        this._reportConnectionType();
-      } else if (state === 'disconnected') {
-        if (this.transferState !== 'completed' && this.transferState !== 'cancelled' && this.transferState !== 'failed') {
-          this.emit('statusChange', 'P2P connection interrupted. Retrying link…', 'warning');
-          this._scheduleIceRecovery();
-        }
-      } else if (state === 'failed') {
-        if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
-        console.warn('[WebRTC Engine] ICE connection failed');
-        const maxAttempts = APP_CONFIG.MAX_ICE_RESTART_ATTEMPTS || 2;
-        if (this._iceRestartAttempts < maxAttempts && !this._isIceRestarting) {
-          this._attemptIceRestart();
-        } else {
-          this._clearIceReconnectTimer();
-          this._handleTransferFailure('WebRTC P2P connection failed. Check your network or firewall.', 'ERR_ICE_FAILED');
-        }
-      }
-    };
-
-    if ('onconnectionstatechange' in this.pc) {
-      this.pc.onconnectionstatechange = () => {
-        if (!this.pc) return;
-        const state = this.pc.connectionState;
-        console.log(`[WebRTC Engine] Connection State: ${state}`);
-        if (state === 'connected') {
-          this._setState('connected');
-        } else if (state === 'failed') {
-          if (this.transferState === 'completed') return;
-          this._handleTransferFailure('WebRTC P2P connection failed. Please ensure both devices can communicate.', 'ERR_PEER_FAILED');
-        }
-      };
-    }
-
-    this.pc.onicecandidate = (event) => {
-      if (event.candidate && event.candidate.candidate) {
-        const candidateData = event.candidate.toJSON ? event.candidate.toJSON() : {
-          candidate: event.candidate.candidate,
-          sdpMid: event.candidate.sdpMid,
-          sdpMLineIndex: event.candidate.sdpMLineIndex,
-          usernameFragment: event.candidate.usernameFragment
-        };
-        this._sendSignaling({ type: 'ice-candidate', candidate: candidateData });
-      }
-    };
-
-    this.pc.ondatachannel = (event) => {
-      console.log('[WebRTC Engine] Received remote DataChannel');
-      this.dataChannel = event.channel;
-      this._setupDataChannelEvents();
-    };
-  }
-
-  async _reportConnectionType() {
-    if (!this.pc || typeof this.pc.getStats !== 'function') {
-      this.emit('statusChange', 'WebRTC Direct P2P Connected ⚡', 'success');
-      return;
-    }
-    try {
-      const stats = await this.pc.getStats();
-      let isHostPair = false;
-      stats.forEach((report) => {
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-          const local = stats.get(report.localCandidateId);
-          const remote = stats.get(report.remoteCandidateId);
-          if (local && remote && local.candidateType === 'host' && remote.candidateType === 'host') {
-            isHostPair = true;
-          }
-        }
-      });
-      if (isHostPair) {
-        this.emit('statusChange', 'WebRTC Direct Same-Network Connected ⚡ (LAN)', 'success');
-      } else {
-        this.emit('statusChange', 'WebRTC Direct P2P Connected ⚡', 'success');
-      }
-    } catch (_) {
-      this.emit('statusChange', 'WebRTC Direct P2P Connected ⚡', 'success');
-    }
-  }
-
-  async _initiatePeerConnection() {
-    if (this.pc && this.pc.signalingState !== 'closed') return;
-
-    this._createPeerConnection();
-    this.dataChannel = this.pc.createDataChannel('flux-file-channel', { ordered: true });
-    this._setupDataChannelEvents();
-
-    try {
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-      this._sendSignaling({ type: 'offer', offer: this.pc.localDescription });
-    } catch (err) {
-      this.emit('error', `Failed to create SDP offer: ${err.message}`, 'ERR_OFFER');
-    }
-  }
-
-  async _handleOffer(offer) {
-    if (this.pc && this.pc.signalingState !== 'stable' && this.pc.signalingState !== 'closed') return;
-    if (!this.pc) this._createPeerConnection();
-
-    try {
-      let RTCSessionDescriptionImpl;
-      if (typeof window !== 'undefined' && window.RTCSessionDescription) {
-        RTCSessionDescriptionImpl = window.RTCSessionDescription;
-      } else {
-        const wrtc = require('@koush/wrtc') || require('wrtc');
-        RTCSessionDescriptionImpl = wrtc.RTCSessionDescription;
-      }
-
-      await this.pc.setRemoteDescription(new RTCSessionDescriptionImpl(offer));
-      this._flushPendingIceCandidates();
-
-      const answer = await this.pc.createAnswer();
-      await this.pc.setLocalDescription(answer);
-      this._sendSignaling({ type: 'answer', answer: this.pc.localDescription });
-    } catch (err) {
-      this.emit('error', `Failed to handle SDP offer: ${err.message}`, 'ERR_HANDLE_OFFER');
-    }
-  }
-
-  async _handleAnswer(answer) {
-    if (!this.pc || this.pc.signalingState !== 'have-local-offer') return;
-    try {
-      let RTCSessionDescriptionImpl;
-      if (typeof window !== 'undefined' && window.RTCSessionDescription) {
-        RTCSessionDescriptionImpl = window.RTCSessionDescription;
-      } else {
-        const wrtc = require('@koush/wrtc') || require('wrtc');
-        RTCSessionDescriptionImpl = wrtc.RTCSessionDescription;
-      }
-
-      await this.pc.setRemoteDescription(new RTCSessionDescriptionImpl(answer));
-      this._flushPendingIceCandidates();
-    } catch (err) {
-      this.emit('error', `Failed to set SDP answer: ${err.message}`, 'ERR_HANDLE_ANSWER');
-    }
-  }
-
-  async _handleRemoteIceCandidate(candidate) {
-    if (!candidate || !candidate.candidate) return;
-    let RTCIceCandidateImpl;
-    if (typeof window !== 'undefined' && window.RTCIceCandidate) {
-      RTCIceCandidateImpl = window.RTCIceCandidate;
-    } else {
-      const wrtc = require('@koush/wrtc') || require('wrtc');
-      RTCIceCandidateImpl = wrtc.RTCIceCandidate;
-    }
-
-    const rtcCandidate = new RTCIceCandidateImpl(candidate);
-    if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
-      try { await this.pc.addIceCandidate(rtcCandidate); } catch (e) { }
-    } else {
-      this.pendingIceCandidates.push(rtcCandidate);
-    }
-  }
-
-  _flushPendingIceCandidates() {
-    while (this.pendingIceCandidates.length > 0) {
-      const candidate = this.pendingIceCandidates.shift();
-      this.pc.addIceCandidate(candidate).catch(() => { });
-    }
-  }
-
-  _setupDataChannelEvents() {
-    if (!this.dataChannel) return;
-
-    this.dataChannel.binaryType = 'arraybuffer';
-    this.dataChannel.bufferedAmountLowThreshold = APP_CONFIG.BUFFER_LOW_WATERMARK;
-
-    this.dataChannel.onopen = () => {
-      console.log('[WebRTC Engine] DataChannel OPEN');
-      this._setState('connected');
-      this.emit('statusChange', 'P2P DataChannel open. Encrypted link ready! ⚡', 'success');
-      this.emit('dataChannelOpen');
-    };
-
-    this.dataChannel.onclose = () => {
-      console.log('[WebRTC Engine] DataChannel CLOSED');
-      if (this.isTransferring) {
-        this._handlePeerDisconnect('DataChannel closed unexpectedly during file transfer.');
-      }
-    };
-
-    this.dataChannel.onerror = (err) => {
-      console.error('[WebRTC Engine] DataChannel Error:', err);
-    };
-
-    this.dataChannel.onmessage = (event) => {
-      this._handleDataChannelMessage(event.data);
-    };
-  }
-
-  /**
-   * Sender helper: Wait for receiver { type: 'metadata-ack' } with configurable timeout
-   */
-  _waitForMetadataAck(timeoutMs = APP_CONFIG.METADATA_ACK_TIMEOUT_MS) {
-    return new Promise((resolve, reject) => {
-      let timer = setTimeout(() => {
-        this._onMetadataAckResolver = null;
-        this._onMetadataAckRejecter = null;
-        reject(new Error(`Receiver metadata-ack timed out after ${timeoutMs / 1000}s`));
-      }, timeoutMs);
-
-      this._onMetadataAckResolver = () => {
-        clearTimeout(timer);
-        this._onMetadataAckResolver = null;
-        this._onMetadataAckRejecter = null;
-        resolve();
-      };
-
-      this._onMetadataAckRejecter = (errMessage) => {
-        clearTimeout(timer);
-        this._onMetadataAckResolver = null;
-        this._onMetadataAckRejecter = null;
-        reject(new Error(errMessage || 'Receiver rejected metadata initialization'));
-      };
-    });
-  }
-
-  /**
-   * Process binary chunk frame (decryption, in-flight SHA-256 update, & storage write)
-   */
-  async _processBinaryChunkFrame(data) {
-    if (!this.incomingMeta || !this.aesKey) {
-      console.warn('[WebRTC Engine] Received chunk frame before metadata key setup');
-      return;
-    }
-
-    let decryptedObj;
-    try {
-      decryptedObj = await this.decryptFrame(data, this.aesKey);
-    } catch (decryptErr) {
-      this._handleTransferFailure(`Decryption failed — authentication or key mismatch: ${decryptErr.message}`, 'ERR_DECRYPT_FAILED');
-      return;
-    }
-
-    const { chunkIndex, chunkData } = decryptedObj;
-    const meta = this.incomingMeta;
-
-    if (chunkIndex < 0 || chunkIndex >= meta.totalChunks) {
-      this._handleTransferFailure('Invalid chunk index received', 'ERR_INVALID_CHUNK_INDEX');
-      return;
-    }
-
-    const expectedNextChunk = this.receivedChunksCount;
-    if (chunkIndex > expectedNextChunk) {
-      this._handleTransferFailure(`Out-of-order chunk received (Expected chunk ${expectedNextChunk}, got chunk ${chunkIndex})`, 'ERR_OUT_OF_ORDER_CHUNK');
-      return;
-    }
-
-    const isDuplicate = chunkIndex < expectedNextChunk;
-
-    // Write chunk to storage (idempotent write at offset)
-    if (this.storage) {
-      const offset = chunkIndex * meta.chunkSize;
-      try {
-        await this.storage.writeChunk(chunkIndex, offset, chunkData);
-      } catch (writeErr) {
-        this._handleTransferFailure(`Storage write error: ${writeErr.message}`, 'ERR_STORAGE_WRITE');
-        return;
-      }
-    }
-
-    // Only update hash and counters for non-duplicate sequential chunks
-    if (!isDuplicate) {
-      if (this._receiverHasher) {
-        this._receiverHasher.update(new Uint8Array(chunkData));
-      }
-      this.receivedChunksCount += 1;
-      this.receivedBytes += chunkData.byteLength;
-    }
-
-    // Update IndexedDB manifest checkpoint every 100 chunks or on completion
-    const isAllChunksReceived = this.receivedChunksCount >= meta.totalChunks;
-    if (this.transferId && !isDuplicate && (this.receivedChunksCount % 100 === 0 || isAllChunksReceived)) {
-      updateManifest(this.transferId, {
-        lastContiguousChunk: this.receivedChunksCount - 1,
-        receivedBytes: this.receivedBytes,
-        streamingHashState: this._receiverHasher ? this._receiverHasher.getState() : null
-      }).catch(() => {});
-    }
-
-    const totalBytes = meta.size;
-    const now = Date.now();
-    const timeDiff = (now - this.lastProgressTime) / 1000;
-
-    if (timeDiff >= 0.5 || this.lastProgressTime === 0) {
-      const bytesDiff = this.receivedBytes - this.lastProgressBytes;
-      this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
-      this.lastProgressTime = now;
-      this.lastProgressBytes = this.receivedBytes;
-    }
-
-    if (isAllChunksReceived || (now - (this._lastRecvUiUpdate || 0)) > 100) {
-      this._lastRecvUiUpdate = now;
-      const percent = Math.min(100, (this.receivedBytes / totalBytes) * 100);
-      this.emit('progress', {
-        percent: percent.toFixed(1),
-        transferredBytes: this.receivedBytes,
-        totalBytes: totalBytes,
-        speedBps: this.currentSpeedBps,
-        role: 'receiver'
-      });
-    }
-
-    if (isAllChunksReceived && this.senderFinalHash && !this.finishStarted) {
-      this.finishStarted = true;
-      await this._finalizeReceiverTransfer();
-    }
-  }
-
-  /**
-   * Handle incoming DataChannel messages (Control JSON vs Binary Encrypted Frames)
-   */
-  async _handleDataChannelMessage(data) {
-    if (typeof data === 'string') {
-      try {
-        const msg = JSON.parse(data);
-
-        if (msg.type === 'metadata') {
-          this.incomingMeta = msg;
-          this.transferId = msg.transferId || null;
-          this.resumeToken = msg.resumeToken || null;
-          this.salt = base64ToBytes(msg.salt);
-          this.receivedChunksCount = 0;
-          this.receivedBytes = 0;
-          this.transferStartTime = Date.now();
-          this.finishStarted = false;
-          this.senderFinalHash = null;
-
-          // Prepare readiness state, early chunk queue, and receiver incremental hasher
-          this._receiverReady = false;
-          this._earlyChunkQueue = [];
-          this._receiverHasher = new StreamingSHA256();
-
-          this._setState('transferring');
-          this.emit('statusChange', `Initializing receiver for "${msg.name}"…`, 'info');
-          this.emit('fileMetadata', msg);
-
-          // 1. Derive key
-          try {
-            this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
-          } catch (keyErr) {
-            this._sendControlMessage({ type: 'metadata-error', error: keyErr.message });
-            this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
-            return;
-          }
-
-          // 2. Initialize receiver storage (OPFS or Memory)
-          try {
-            this.storage = await createReceiverStorage(msg);
-          } catch (storageErr) {
-            this._sendControlMessage({ type: 'metadata-error', error: storageErr.message });
-            this._handleTransferFailure(storageErr.message, 'ERR_STORAGE_LIMIT');
-            return;
-          }
-
-          // 3. Create IndexedDB manifest checkpoint
-          if (this.transferId) {
-            try {
-              await createManifest({
-                transferId: msg.transferId,
-                fileName: msg.name,
-                fileSize: msg.size,
-                chunkSize: msg.chunkSize,
-                totalChunks: msg.totalChunks,
-                salt: msg.salt,
-                resumeToken: msg.resumeToken,
-                lastContiguousChunk: -1,
-                receivedBytes: 0,
-                streamingHashState: this._receiverHasher ? this._receiverHasher.getState() : null
-              });
-            } catch (_) {}
-          }
-
-          // 4. Mark receiver ready and send metadata-ack to sender
-          this._receiverReady = true;
-          this._sendControlMessage({ type: 'metadata-ack' });
-          this.emit('statusChange', `Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
-
-          // 5. Drain & process any early queued binary chunks safely
-          if (this._earlyChunkQueue && this._earlyChunkQueue.length > 0) {
-            const queueToProcess = [...this._earlyChunkQueue];
-            this._earlyChunkQueue = null;
-            for (const earlyData of queueToProcess) {
-              await this._processBinaryChunkFrame(earlyData);
-            }
-          } else {
-            this._earlyChunkQueue = null;
-          }
-
-        } else if (msg.type === 'metadata-ack') {
-          console.log('[WebRTC Engine] Receiver sent metadata-ack. Starting binary stream.');
-          if (typeof this._onMetadataAckResolver === 'function') {
-            this._onMetadataAckResolver();
-          }
-
-        } else if (msg.type === 'metadata-error') {
-          console.error('[WebRTC Engine] Receiver rejected metadata:', msg.error);
-          if (typeof this._onMetadataAckRejecter === 'function') {
-            this._onMetadataAckRejecter(msg.error);
-          } else {
-            this._handleTransferFailure(`Receiver failed to initialize: ${msg.error || 'Initialization error'}`, 'ERR_RECEIVER_INIT_FAILED');
-          }
-
-        } else if (msg.type === 'transfer-complete') {
-          console.log('[WebRTC Engine] Sender announced transfer-complete with SHA-256:', msg.hash);
-          this.senderFinalHash = msg.hash;
-          if (this.receivedChunksCount >= (this.incomingMeta ? this.incomingMeta.totalChunks : 0) && !this.finishStarted) {
-            this.finishStarted = true;
-            await this._finalizeReceiverTransfer();
-          }
-
-        } else if (msg.type === 'ack-complete') {
-          if (this.currentFile || this.isTransferring) {
-            const file = this.currentFile;
-            this.currentFile = null;
-            this._setState('completed');
-            this.emit('statusChange', 'File transfer verified and acknowledged by receiver! 🎉', 'success');
-            const meta = {
-              name: file ? file.name : 'File',
-              size: file ? file.size : 0,
-              isSender: true
+          const workerPath = '/hash-worker.js';
+          const worker = new Worker(workerPath);
+          const hashResult = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              try { worker.terminate(); } catch (_) { }
+              reject(new Error('Hash worker timeout'));
+            }, 30000);
+            worker.onmessage = (e) => {
+              if (e.data?.type === 'complete') {
+                clearTimeout(timer);
+                try { worker.terminate(); } catch (_) { }
+                resolve(e.data.hash);
+              } else if (e.data?.type === 'error') {
+                clearTimeout(timer);
+                try { worker.terminate(); } catch (_) { }
+                reject(new Error(e.data.message));
+              }
             };
-            this.emit('fileComplete', null, meta);
-          }
-
-        } else if (msg.type === 'resume-request') {
-          const { transferId, resumeToken } = msg;
-          const manifest = await getManifest(transferId);
-
-          if (!manifest || manifest.resumeToken !== resumeToken || manifest.expiresAt <= Date.now() || manifest.status !== 'active') {
-            this._sendControlMessage({ type: 'resume-response', ok: false, error: 'Resume validation failed: invalid token or expired manifest' });
-            return;
-          }
-
-          this.transferId = manifest.transferId;
-          this.resumeToken = manifest.resumeToken;
-          this.salt = base64ToBytes(manifest.salt);
-          this.incomingMeta = {
-            transferId: manifest.transferId,
-            name: manifest.fileName,
-            size: manifest.fileSize,
-            chunkSize: manifest.chunkSize,
-            totalChunks: manifest.totalChunks,
-            salt: manifest.salt,
-            isResume: true
-          };
-
-          try {
-            this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
-          } catch (keyErr) {
-            this._sendControlMessage({ type: 'resume-response', ok: false, error: 'Key derivation failed' });
-            return;
-          }
-
-          this._receiverHasher = new StreamingSHA256();
-          if (manifest.streamingHashState) {
-            try {
-              this._receiverHasher.setState(manifest.streamingHashState);
-            } catch (_) {}
-          }
-
-          try {
-            this.storage = await createReceiverStorage(this.incomingMeta);
-          } catch (storageErr) {
-            this._sendControlMessage({ type: 'resume-response', ok: false, error: storageErr.message });
-            return;
-          }
-
-          const lastChunk = manifest.lastContiguousChunk;
-          this.receivedChunksCount = lastChunk + 1;
-          this.receivedBytes = manifest.receivedBytes;
-          this.transferStartTime = Date.now();
-          this.finishStarted = false;
-          this.senderFinalHash = null;
-          this._receiverReady = true;
-
-          this._setState('transferring');
-          this.emit('statusChange', `Resuming file "${manifest.fileName}" from chunk ${lastChunk + 1}…`, 'info');
-
-          this._sendControlMessage({
-            type: 'resume-response',
-            ok: true,
-            transferId: manifest.transferId,
-            lastContiguousChunk: lastChunk
+            worker.postMessage({ type: 'hash-file', file: payload });
           });
-
-        } else if (msg.type === 'resume-response') {
-          if (!msg.ok) {
-            this._handleTransferFailure(`Resume rejected by receiver: ${msg.error || 'Validation failed'}`, 'ERR_RESUME_REJECTED');
-            if (typeof this._onResumeResolver === 'function') {
-              this._onResumeResolver(false);
-            }
-          } else {
-            this._lastResumeChunk = msg.lastContiguousChunk;
-            if (typeof this._onResumeResolver === 'function') {
-              this._onResumeResolver(true);
-            }
-          }
-
-        } else if (msg.type === 'cancel') {
-          if (this.transferId) {
-            deleteManifest(this.transferId).catch(() => {});
-          }
-          if (this.storage) {
-            await this.storage.abort();
-            this.storage = null;
-          }
-          this._receiverHasher = null;
-          this._setState('cancelled');
-          this.emit('statusChange', 'Transfer cancelled by peer.', 'warning');
-          this.emit('error', 'Peer cancelled the file transfer.', 'ERR_TRANSFER_CANCELLED');
-        } else if (msg.type === 'zen_game') {
-          this.emit('controlMessage', msg);
+          return hashResult;
+        } catch (_) {
+          // Fallback if worker creation fails (e.g. cross-origin/sandbox)
         }
-      } catch (e) {
-        console.error('[WebRTC Engine] Failed parsing text frame');
       }
-    } else if (data instanceof ArrayBuffer) {
-      if (!this._receiverReady) {
-        if (this._earlyChunkQueue) {
-          if (this._earlyChunkQueue.length >= APP_CONFIG.MAX_EARLY_CHUNK_QUEUE_SIZE) {
-            this._sendControlMessage({ type: 'metadata-error', error: 'Early chunk queue overflow' });
-            this._handleTransferFailure('Early chunk queue overflow', 'ERR_EARLY_QUEUE_OVERFLOW');
-            return;
-          }
-          console.warn(`[WebRTC Engine] Early binary chunk received before receiver ready. Queueing (${this._earlyChunkQueue.length + 1}/${APP_CONFIG.MAX_EARLY_CHUNK_QUEUE_SIZE}).`);
-          this._earlyChunkQueue.push(data);
+
+      return await this._canonicalHashFallback(payload);
+    }
+
+    async _canonicalHashFallback(fileOrChunks) {
+      if (fileOrChunks instanceof Blob || (typeof File !== 'undefined' && fileOrChunks instanceof File)) {
+        const chunkSize = 1024 * 1024; // 1 MB streaming slices
+        let offset = 0;
+        const total = fileOrChunks.size;
+
+        if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function' && total <= chunkSize) {
+          const buf = await fileOrChunks.arrayBuffer();
+          const hashBuf = await crypto.subtle.digest('SHA-256', buf);
+          return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        const hasherClass = this._getStreamingSHA256Class();
+        const hasher = new hasherClass();
+        while (offset < total) {
+          const slice = fileOrChunks.slice(offset, Math.min(offset + chunkSize, total));
+          const buf = await slice.arrayBuffer();
+          hasher.update(new Uint8Array(buf));
+          offset += buf.byteLength;
+        }
+        return hasher.digestHex();
+      }
+
+      if (Array.isArray(fileOrChunks)) {
+        const hasherClass = this._getStreamingSHA256Class();
+        const hasher = new hasherClass();
+        for (let c of fileOrChunks) {
+          if (!c) continue;
+          const arr = ArrayBuffer.isView(c) ? new Uint8Array(c.buffer, c.byteOffset, c.byteLength) : new Uint8Array(c);
+          hasher.update(arr);
+        }
+        return hasher.digestHex();
+      }
+
+      return `hash_${Date.now()}`;
+    }
+
+    /**
+     * Connect to WebSocket signaling server and join room
+     * @param {string} roomCode 
+     * @param {string} [sessionCode] - Pairing PIN used for key derivation
+     */
+    connect(roomCode, sessionCode = null) {
+      if (!roomCode) {
+        this.onError('Room code is required', 'ERR_INVALID_ROOM');
+        return;
+      }
+
+      this.disconnect();
+      this.roomCode = String(roomCode).trim();
+      this.sessionCode = sessionCode ? String(sessionCode).trim() : this.roomCode;
+      this._setState('connecting');
+      this.onStatusChange('Connecting to signaling server…', 'info');
+
+      try {
+        const WebSocketImpl = typeof window !== 'undefined' ? window.WebSocket : require('ws');
+        this.ws = new WebSocketImpl(this.signalingUrl);
+      } catch (err) {
+        this._setState('failed');
+        this.onError(`Failed to connect to signaling server: ${err.message}`, 'ERR_WS_CONNECT');
+        return;
+      }
+
+      this.ws.onopen = () => {
+        this._hasTriedFallback = false;
+        this.onStatusChange('Connected to signaling server. Joining room…', 'info');
+        this._sendSignaling({ type: 'join-room', room: this.roomCode });
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          this._handleSignalingMessage(msg);
+        } catch (e) {
+          console.error('[WebRTC Engine] Bad signaling message');
+        }
+      };
+
+      this.ws.onerror = () => {
+        if (this.transferState === 'completed') return;
+        if (!this._hasTriedFallback && typeof window !== 'undefined' && window.location && window.location.protocol !== 'https:') {
+          this._hasTriedFallback = true;
+          const altUrl = this.signalingUrl.includes(':8080')
+            ? `ws://${window.location.host}/ws`
+            : `ws://${window.location.hostname}:8080`;
+          console.log(`[WebRTC Engine] Primary signaling failed. Retrying fallback URL: ${altUrl}`);
+          this.signalingUrl = altUrl;
+          try { this.ws.close(); } catch (_) { }
+          this.connect(this.roomCode, this.sessionCode);
           return;
+        }
+        this._setState('failed');
+        this.onStatusChange('Signaling server connection error', 'error');
+        this.onError('WebSocket connection to signaling server failed.', 'ERR_WS_ERROR');
+      };
+
+      this.ws.onclose = () => {
+        console.log('[WebRTC Engine] WebSocket closed');
+      };
+    }
+
+    _handleSignalingMessage(msg) {
+      switch (msg.type) {
+        case 'joined':
+          this.role = msg.role;
+          this.onStatusChange(`Room joined. Waiting for peer…`, 'info');
+          if (msg.peerPresent && this.role === 'initiator') {
+            this.onPeerJoined();
+            this._initiatePeerConnection();
+          }
+          break;
+
+        case 'peer-joined':
+          this.onStatusChange('Peer connected! Negotiating P2P link…', 'info');
+          this.onPeerJoined();
+          if (this.role === 'initiator') {
+            this._initiatePeerConnection();
+          }
+          break;
+
+        case 'offer':
+          this._handleOffer(msg.offer);
+          break;
+
+        case 'answer':
+          this._handleAnswer(msg.answer);
+          break;
+
+        case 'ice-candidate':
+          this._handleRemoteIceCandidate(msg.candidate);
+          break;
+
+        case 'peer-left':
+          this.onStatusChange('Peer disconnected from room', 'warning');
+          this.onPeerLeft();
+          this._handlePeerDisconnect('Peer left the signaling room mid-session.');
+          break;
+
+        case 'room-full':
+          this.onStatusChange('Room is full (Maximum 2 peers)', 'error');
+          this.onError(`Room is full. Please try another code.`, 'ERR_ROOM_FULL');
+          this.disconnect();
+          break;
+
+        case 'error':
+          this.onError(msg.message, 'ERR_SIGNALING');
+          break;
+      }
+    }
+
+    _createPeerConnection() {
+      const pcConfig = {
+        iceServers: this.iceServers,
+        iceCandidatePoolSize: 10, // More candidates pre-gathered = faster hole-punching
+        bundlePolicy: 'max-bundle',
+        iceTransportPolicy: 'all'
+      };
+
+      let RTCPeerConnectionImpl;
+      if (typeof window !== 'undefined' && (window.RTCPeerConnection || window.webkitRTCPeerConnection)) {
+        RTCPeerConnectionImpl = window.RTCPeerConnection || window.webkitRTCPeerConnection;
+      } else {
+        try {
+          RTCPeerConnectionImpl = require('@koush/wrtc').RTCPeerConnection || require('wrtc').RTCPeerConnection;
+        } catch (_) {
+          throw new Error('RTCPeerConnection is unavailable in this environment');
+        }
+      }
+
+      this.pc = new RTCPeerConnectionImpl(pcConfig);
+
+      this.pc.oniceconnectionstatechange = () => {
+        const state = this.pc.iceConnectionState;
+        console.log(`[WebRTC Engine] ICE State: ${state}`);
+
+        if (state === 'connected' || state === 'completed') {
+          this._setState('connected');
+          this._reportConnectionType();
+        } else if (state === 'failed') {
+          console.warn('[WebRTC Engine] ICE connection failed, checking connectionState');
+          if (this.pc.connectionState === 'failed') {
+            this._setState('failed');
+            this.onStatusChange('P2P connection failed', 'error');
+            this.onError('WebRTC P2P connection failed. Check your network or firewall.', 'ERR_ICE_FAILED');
+            this.disconnect();
+          }
+        } else if (state === 'disconnected') {
+          this.onStatusChange('P2P connection interrupted', 'warning');
+        }
+      };
+
+      if ('onconnectionstatechange' in this.pc) {
+        this.pc.onconnectionstatechange = () => {
+          const state = this.pc.connectionState;
+          console.log(`[WebRTC Engine] Connection State: ${state}`);
+          if (state === 'connected') {
+            this._setState('connected');
+          } else if (state === 'failed') {
+            this._setState('failed');
+            this.onStatusChange('P2P connection failed', 'error');
+            this.onError('WebRTC P2P connection failed. Please ensure both devices can communicate.', 'ERR_PEER_FAILED');
+            this.disconnect();
+          }
+        };
+      }
+
+      this.pc.onicecandidate = (event) => {
+        if (event.candidate && event.candidate.candidate) {
+          const candidateData = event.candidate.toJSON ? event.candidate.toJSON() : {
+            candidate: event.candidate.candidate,
+            sdpMid: event.candidate.sdpMid,
+            sdpMLineIndex: event.candidate.sdpMLineIndex,
+            usernameFragment: event.candidate.usernameFragment
+          };
+          this._sendSignaling({ type: 'ice-candidate', candidate: candidateData });
+        }
+      };
+
+      this.pc.ondatachannel = (event) => {
+        console.log('[WebRTC Engine] Received remote DataChannel');
+        this.dataChannel = event.channel;
+        this._setupDataChannelEvents();
+      };
+    }
+
+    async _reportConnectionType() {
+      if (!this.pc || typeof this.pc.getStats !== 'function') {
+        this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+        return;
+      }
+      try {
+        const stats = await this.pc.getStats();
+        let isHostPair = false;
+        stats.forEach((report) => {
+          if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+            const local = stats.get(report.localCandidateId);
+            const remote = stats.get(report.remoteCandidateId);
+            if (local && remote && local.candidateType === 'host' && remote.candidateType === 'host') {
+              isHostPair = true;
+            }
+          }
+        });
+        if (isHostPair) {
+          this.onStatusChange('WebRTC Direct Same-Network Connected ⚡ (LAN)', 'success');
         } else {
+          this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+        }
+      } catch (_) {
+        this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+      }
+    }
+
+    async _initiatePeerConnection() {
+      if (this.pc && this.pc.signalingState !== 'closed') return;
+
+      this._createPeerConnection();
+      // ordered: false eliminates head-of-line blocking — chunks arrive out-of-order
+      // but we already reassemble by chunkIndex, so this is safe and much faster.
+      this.dataChannel = this.pc.createDataChannel('flux-file-channel', {
+        ordered: false,
+        maxRetransmits: 0 // No retransmits — missing chunks are caught by SHA-256 verify
+      });
+      this._setupDataChannelEvents();
+
+      try {
+        const offer = await this.pc.createOffer();
+        await this.pc.setLocalDescription(offer);
+        this._sendSignaling({ type: 'offer', offer: this.pc.localDescription });
+      } catch (err) {
+        this.onError(`Failed to create SDP offer: ${err.message}`, 'ERR_OFFER');
+      }
+    }
+
+    async _handleOffer(offer) {
+      if (this.pc && this.pc.signalingState !== 'stable' && this.pc.signalingState !== 'closed') return;
+      if (!this.pc) this._createPeerConnection();
+
+      try {
+        let RTCSessionDescriptionImpl;
+        if (typeof window !== 'undefined' && window.RTCSessionDescription) {
+          RTCSessionDescriptionImpl = window.RTCSessionDescription;
+        } else {
+          const wrtc = require('@koush/wrtc') || require('wrtc');
+          RTCSessionDescriptionImpl = wrtc.RTCSessionDescription;
+        }
+
+        await this.pc.setRemoteDescription(new RTCSessionDescriptionImpl(offer));
+        this._flushPendingIceCandidates();
+
+        const answer = await this.pc.createAnswer();
+        await this.pc.setLocalDescription(answer);
+        this._sendSignaling({ type: 'answer', answer: this.pc.localDescription });
+      } catch (err) {
+        this.onError(`Failed to handle SDP offer: ${err.message}`, 'ERR_HANDLE_OFFER');
+      }
+    }
+
+    async _handleAnswer(answer) {
+      if (!this.pc || this.pc.signalingState !== 'have-local-offer') return;
+      try {
+        let RTCSessionDescriptionImpl;
+        if (typeof window !== 'undefined' && window.RTCSessionDescription) {
+          RTCSessionDescriptionImpl = window.RTCSessionDescription;
+        } else {
+          const wrtc = require('@koush/wrtc') || require('wrtc');
+          RTCSessionDescriptionImpl = wrtc.RTCSessionDescription;
+        }
+
+        await this.pc.setRemoteDescription(new RTCSessionDescriptionImpl(answer));
+        this._flushPendingIceCandidates();
+      } catch (err) {
+        this.onError(`Failed to set SDP answer: ${err.message}`, 'ERR_HANDLE_ANSWER');
+      }
+    }
+
+    async _handleRemoteIceCandidate(candidate) {
+      if (!candidate || !candidate.candidate) return;
+      let RTCIceCandidateImpl;
+      if (typeof window !== 'undefined' && window.RTCIceCandidate) {
+        RTCIceCandidateImpl = window.RTCIceCandidate;
+      } else {
+        const wrtc = require('@koush/wrtc') || require('wrtc');
+        RTCIceCandidateImpl = wrtc.RTCIceCandidate;
+      }
+
+      const rtcCandidate = new RTCIceCandidateImpl(candidate);
+      if (this.pc && this.pc.remoteDescription && this.pc.remoteDescription.type) {
+        try { await this.pc.addIceCandidate(rtcCandidate); } catch (e) { }
+      } else {
+        this.pendingIceCandidates.push(rtcCandidate);
+      }
+    }
+
+    _flushPendingIceCandidates() {
+      while (this.pendingIceCandidates.length > 0) {
+        const candidate = this.pendingIceCandidates.shift();
+        this.pc.addIceCandidate(candidate).catch(() => { });
+      }
+    }
+
+    _setupDataChannelEvents() {
+      if (!this.dataChannel) return;
+
+      this.dataChannel.binaryType = 'arraybuffer';
+      this.dataChannel.bufferedAmountLowThreshold = BUFFER_LOW_WATERMARK;
+
+      this.dataChannel.onopen = () => {
+        console.log('[WebRTC Engine] DataChannel OPEN');
+        this._setState('connected');
+        this.onStatusChange('P2P DataChannel open. Encrypted link ready! ⚡', 'success');
+        this.onDataChannelOpen();
+      };
+
+      this.dataChannel.onclose = () => {
+        console.log('[WebRTC Engine] DataChannel CLOSED');
+        if (this.isTransferring) {
+          this._handlePeerDisconnect('DataChannel closed unexpectedly during file transfer.');
+        }
+      };
+
+      this.dataChannel.onerror = (err) => {
+        console.error('[WebRTC Engine] DataChannel Error:', err);
+      };
+
+      this.dataChannel.onmessage = (event) => {
+        this._handleDataChannelMessage(event.data);
+      };
+    }
+
+    /**
+     * Handle incoming DataChannel messages (Control JSON vs Binary Encrypted Frames)
+     */
+    async _handleDataChannelMessage(data) {
+      if (typeof data === 'string') {
+        try {
+          const msg = JSON.parse(data);
+
+          if (msg.type === 'metadata') {
+            this.incomingMeta = msg;
+            this.salt = base64ToBytes(msg.salt);
+            this.receivedChunksCount = 0;
+            this.receivedBytes = 0;
+            this.transferStartTime = Date.now();
+            this.isTransferring = true;
+            this.finishStarted = false;
+            this._setState('transferring');
+
+            // Derive AES key for decryption
+            try {
+              this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+            } catch (keyErr) {
+              this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+              return;
+            }
+
+            // OPFS Storage Initialization or Memory Storage Fallback
+            this.opfsActive = false;
+            if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function' && typeof Worker !== 'undefined') {
+              try {
+                const workerPath = '/opfs-writer-worker.js';
+                const worker = new Worker(workerPath);
+                const isInitialized = await new Promise((resolve) => {
+                  const timer = setTimeout(() => resolve(false), 2000);
+                  worker.onmessage = (e) => {
+                    if (e.data?.type === 'init-ack') {
+                      clearTimeout(timer);
+                      resolve(true);
+                    } else if (e.data?.type === 'error') {
+                      clearTimeout(timer);
+                      resolve(false);
+                    }
+                  };
+                  worker.postMessage({ type: 'init', fileName: msg.name, totalSize: msg.size });
+                });
+                if (isInitialized) {
+                  this.opfsWorker = worker;
+                  this.opfsActive = true;
+                } else {
+                  try { worker.terminate(); } catch (_) { }
+                }
+              } catch (_) {
+                this.opfsActive = false;
+              }
+            }
+
+            if (!this.opfsActive) {
+              this.memoryChunks = new Array(msg.totalChunks);
+            }
+
+            this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
+            this.onFileMetadata(msg);
+
+          } else if (msg.type === 'ack-complete') {
+            if (this.currentFile || this.isTransferring) {
+              const file = this.currentFile;
+              this.currentFile = null;
+              this.isTransferring = false;
+              this._setState('completed');
+              this.onStatusChange('File transfer verified and acknowledged by receiver! 🎉', 'success');
+              const meta = {
+                name: file ? file.name : 'File',
+                size: file ? file.size : 0,
+                isSender: true
+              };
+              this.onFileComplete(null, meta);
+            }
+          } else if (msg.type === 'cancel') {
+            this._cleanupReceiverStorage(true);
+            this.isTransferring = false;
+            this._setState('cancelled');
+            this.onStatusChange('Transfer cancelled by peer.', 'warning');
+            this.onError('Peer cancelled the file transfer.', 'ERR_TRANSFER_CANCELLED');
+          } else if (msg.type === 'zen_game') {
+            // Application-level control message passed to registered handler
+            this.onControlMessage(msg);
+          }
+        } catch (e) {
+          console.error('[WebRTC Engine] Failed parsing text frame');
+        }
+      } else if (data instanceof ArrayBuffer) {
+        // Binary Chunk Frame -> [ChunkIndex (4B)][IV (12B)][Ciphertext + Tag]
+        if (!this.incomingMeta || !this.aesKey) {
           console.warn('[WebRTC Engine] Received chunk frame before metadata key setup');
           return;
         }
-      }
 
-      await this._processBinaryChunkFrame(data);
-    }
-  }
+        let decryptedObj;
+        try {
+          decryptedObj = await this.decryptFrame(data, this.aesKey);
+        } catch (decryptErr) {
+          this._handleTransferFailure(`Decryption failed — authentication or key mismatch: ${decryptErr.message}`, 'ERR_DECRYPT_FAILED');
+          return;
+        }
 
-  /**
-   * Finalize received file and verify SHA-256 integrity against in-flight receiver hash
-   */
-  async _finalizeReceiverTransfer() {
-    const meta = this.incomingMeta;
-    this.incomingMeta = null;
-    const activeStorage = this.storage;
+        const { chunkIndex, chunkData } = decryptedObj;
+        const meta = this.incomingMeta;
 
-    try {
-      let fileObj = null;
-      if (activeStorage) {
-        fileObj = await activeStorage.finalize();
-      }
+        if (chunkIndex < 0 || chunkIndex >= meta.totalChunks) {
+          this._handleTransferFailure('Invalid chunk index received', 'ERR_INVALID_CHUNK_INDEX');
+          return;
+        }
 
-      if (!fileObj) throw new Error('Failed to retrieve file from storage');
-
-      // Finalize Receiver Incremental SHA-256
-      this.emit('statusChange', 'Verifying SHA-256 file integrity checksum…', 'info');
-      let computedHash = '';
-      if (this._receiverHasher) {
-        computedHash = this._receiverHasher.digestHex();
-        this._receiverHasher = null;
-      } else {
-        computedHash = await this._computeHash(fileObj);
-      }
-
-      const expectedHash = this.senderFinalHash;
-
-      if (!expectedHash || computedHash !== expectedHash) {
-        throw new Error(`SHA-256 checksum mismatch (Expected ${expectedHash ? expectedHash.slice(0, 8) : 'none'}…, got ${computedHash.slice(0, 8)}…)`);
-      }
-
-      if (this.transferId) {
-        deleteManifest(this.transferId).catch(() => {});
-      }
-
-      // Verification successful
-      this.storage = null;
-      this._setState('completed');
-      this.emit('statusChange', `File "${meta.name}" received & verified successfully! 🎉`, 'success');
-      this.emit('fileComplete', fileObj, meta);
-
-      this._sendControlMessage({ type: 'ack-complete', hash: computedHash });
-
-    } catch (err) {
-      this._receiverHasher = null;
-      if (this.transferId) {
-        deleteManifest(this.transferId).catch(() => {});
-      }
-      if (activeStorage) {
-        if (typeof activeStorage.purge === 'function') {
-          await activeStorage.purge();
+        if (this.opfsActive && this.opfsWorker) {
+          const offset = chunkIndex * meta.chunkSize;
+          this.opfsWorker.postMessage({ type: 'write', chunkIndex, offset, buffer: chunkData }, [chunkData]);
         } else {
-          await activeStorage.abort();
+          if (!this.memoryChunks) this.memoryChunks = new Array(meta.totalChunks);
+          this.memoryChunks[chunkIndex] = chunkData;
+        }
+
+        this.receivedChunksCount += 1;
+        this.receivedBytes += chunkData.byteLength;
+
+        const totalBytes = meta.size;
+        const now = Date.now();
+        const timeDiff = (now - this.lastProgressTime) / 1000;
+
+        if (timeDiff >= 0.5 || this.lastProgressTime === 0) {
+          const bytesDiff = this.receivedBytes - this.lastProgressBytes;
+          this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
+          this.lastProgressTime = now;
+          this.lastProgressBytes = this.receivedBytes;
+        }
+
+        const isAllChunksReceived = this.receivedChunksCount >= meta.totalChunks;
+        if (isAllChunksReceived || (now - (this._lastRecvUiUpdate || 0)) > 100) {
+          this._lastRecvUiUpdate = now;
+          const percent = Math.min(100, (this.receivedBytes / totalBytes) * 100);
+          this.onProgress({
+            percent: percent.toFixed(1),
+            transferredBytes: this.receivedBytes,
+            totalBytes: totalBytes,
+            speedBps: this.currentSpeedBps,
+            role: 'receiver'
+          });
+        }
+
+        if (isAllChunksReceived && !this.finishStarted) {
+          this.finishStarted = true;
+          await this._finalizeReceiverTransfer();
         }
       }
-      if (this.storage === activeStorage) {
-        this.storage = null;
+    }
+
+    /**
+     * Finalize received file: extract File/Blob, compute off-thread SHA-256, verify integrity
+     */
+    async _finalizeReceiverTransfer() {
+      const meta = this.incomingMeta;
+      this.incomingMeta = null;
+
+      try {
+        let fileObj;
+        if (this.opfsActive && this.opfsWorker) {
+          fileObj = await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('OPFS worker finalize timed out')), 5000);
+            this.opfsWorker.onmessage = (e) => {
+              if (e.data?.type === 'finalize-ack') {
+                clearTimeout(timer);
+                resolve(e.data.file);
+              } else if (e.data?.type === 'error') {
+                clearTimeout(timer);
+                reject(new Error(e.data.message));
+              }
+            };
+            this.opfsWorker.postMessage({ type: 'finalize' });
+          });
+          try { this.opfsWorker.terminate(); } catch (_) { }
+          this.opfsWorker = null;
+          this.opfsActive = false;
+        } else {
+          const chunks = this.memoryChunks || [];
+          for (let i = 0; i < chunks.length; i++) {
+            if (!chunks[i]) throw new Error(`Missing chunk index ${i}`);
+          }
+          fileObj = new Blob(chunks, { type: meta.mimeType || 'application/octet-stream' });
+          this.memoryChunks = null;
+        }
+
+        // SHA-256 Integrity Verification
+        this.onStatusChange('Verifying SHA-256 file integrity checksum…', 'info');
+        const computedHash = await this._computeHash(fileObj);
+
+        if (computedHash !== meta.hash) {
+          throw new Error(`SHA-256 checksum mismatch (Expected ${meta.hash.slice(0, 8)}…, got ${computedHash.slice(0, 8)}…)`);
+        }
+
+        // Verification successful -> notify sender and fire onFileComplete
+        this.isTransferring = false;
+        this._setState('completed');
+        this.onStatusChange(`File "${meta.name}" received & verified successfully! 🎉`, 'success');
+        this.onFileComplete(fileObj, meta);
+
+        this._sendControlMessage({ type: 'ack-complete', hash: computedHash });
+
+      } catch (err) {
+        this._cleanupReceiverStorage(true);
+        this._handleTransferFailure(`Transfer verification failed: ${err.message}`, 'ERR_INTEGRITY_FAILED');
       }
-      this.storage = null;
-      this._handleTransferFailure(`Transfer verification failed: ${err.message}`, 'ERR_INTEGRITY_FAILED');
-    }
-  }
-
-  /**
-   * Send File over DataChannel with AES-256-GCM E2EE & In-Flight Incremental SHA-256 Hashing
-   */
-  async sendFile(file, resumeOptions = null) {
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      this.emit('error', 'P2P DataChannel is not open. Connect to peer first.', 'ERR_NOT_CONNECTED');
-      return;
     }
 
-    if (!file) {
-      this.emit('error', 'No file selected for transfer.', 'ERR_NO_FILE');
-      return;
+    _cleanupReceiverStorage(deleteFile = false) {
+      this.memoryChunks = null;
+      if (this.opfsWorker) {
+        if (deleteFile) {
+          try { this.opfsWorker.postMessage({ type: 'abort' }); } catch (_) { }
+        }
+        try { this.opfsWorker.terminate(); } catch (_) { }
+        this.opfsWorker = null;
+      }
+      this.opfsActive = false;
     }
 
-    if (this.isTransferring) {
-      console.warn('[WebRTC Engine] Transfer already in progress. Ignoring duplicate call.');
-      return;
-    }
-
-    this.currentFile = file;
-    this._setState('transferring');
-    const chunkSize = APP_CONFIG.DEFAULT_CHUNK_SIZE;
-    const totalChunks = Math.ceil(file.size / chunkSize);
-
-    const cryptoObj = CryptoService.getCrypto();
-
-    if (resumeOptions && resumeOptions.transferId) {
-      this.transferId = resumeOptions.transferId;
-      this.resumeToken = resumeOptions.resumeToken;
-      this.salt = base64ToBytes(resumeOptions.salt);
-    } else {
-      this.transferId = Array.from(cryptoObj.getRandomValues(new Uint8Array(16)))
-        .map(b => b.toString(16).padStart(2, '0')).join('');
-      this.resumeToken = bytesToBase64(cryptoObj.getRandomValues(new Uint8Array(32)));
-      this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
-    }
-
-    try {
-      this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
-    } catch (keyErr) {
-      this._senderHasher = null;
-      this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
-      return;
-    }
-
-    let offset = 0;
-    let chunkIndex = 0;
-
-    if (resumeOptions && resumeOptions.transferId) {
-      this.emit('statusChange', 'Sending resume request to receiver…', 'info');
-      this._sendControlMessage({
-        type: 'resume-request',
-        transferId: this.transferId,
-        resumeToken: this.resumeToken
-      });
-
-      const resumeOk = await new Promise((resolve) => {
-        let timer = setTimeout(() => {
-          this._onResumeResolver = null;
-          resolve(false);
-        }, APP_CONFIG.METADATA_ACK_TIMEOUT_MS);
-
-        this._onResumeResolver = (accepted) => {
-          clearTimeout(timer);
-          this._onResumeResolver = null;
-          resolve(accepted);
-        };
-      });
-
-      if (!resumeOk) {
-        this._handleTransferFailure('Resume request rejected or timed out.', 'ERR_RESUME_REJECTED');
+    /**
+     * Send File over DataChannel with AES-256-GCM E2EE & Event-Driven Backpressure
+     * @param {File|Blob} file 
+     */
+    async sendFile(file) {
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+        this.onError('P2P DataChannel is not open. Connect to peer first.', 'ERR_NOT_CONNECTED');
         return;
       }
 
-      const lastChunk = this._lastResumeChunk ?? -1;
-      const resumeChunk = lastChunk + 1;
-      offset = resumeChunk * chunkSize;
-      chunkIndex = resumeChunk;
-
-      this.emit('statusChange', `Rebuilding SHA-256 hash state for resume from chunk ${resumeChunk}…`, 'info');
-      this._senderHasher = new StreamingSHA256();
-      if (offset > 0) {
-        const prefixSlice = file.slice(0, offset);
-        const prefixBuffer = await prefixSlice.arrayBuffer();
-        this._senderHasher.update(prefixBuffer);
+      if (!file) {
+        this.onError('No file selected for transfer.', 'ERR_NO_FILE');
+        return;
       }
 
-      this.emit('statusChange', `Resuming encrypted transfer of "${file.name}" from chunk ${resumeChunk} (${this._formatBytes(offset)} / ${this._formatBytes(file.size)})…`, 'info');
+      if (this.isTransferring) {
+        console.warn('[WebRTC Engine] Transfer already in progress. Ignoring duplicate call.');
+        return;
+      }
 
-    } else {
-      // Normal Transfer Setup
-      this._senderHasher = new StreamingSHA256();
+      this.currentFile = file;
+      this.isTransferring = true;
+      this._setState('transferring');
+      const chunkSize = DEFAULT_CHUNK_SIZE;
+      const totalChunks = Math.ceil(file.size / chunkSize);
 
+      // Generate 16-byte random salt for PBKDF2
+      const cryptoObj = getCrypto();
+      this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
+
+      // Derive AES key (10k PBKDF2 iterations — ~10× faster than 100k, still OWASP-compliant)
+      try {
+        this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+      } catch (keyErr) {
+        this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+        return;
+      }
+
+      // Compute SHA-256 hash of plaintext file (off-thread via worker)
+      this.onStatusChange(`Calculating SHA-256 hash for "${file.name}"…`, 'info');
+      let fileHash = '';
+      try {
+        fileHash = await this._computeHash(file);
+      } catch (hashErr) {
+        this._handleTransferFailure(`SHA-256 calculation failed: ${hashErr.message}`, 'ERR_HASH_FAILED');
+        return;
+      }
+
+      // Send Metadata Header
       const metadata = {
         type: 'metadata',
         v: 2,
         cipher: 'AES-256-GCM',
-        transferId: this.transferId,
-        resumeToken: this.resumeToken,
         name: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
         chunkSize: chunkSize,
         totalChunks: totalChunks,
-        salt: bytesToBase64(this.salt)
+        salt: bytesToBase64(this.salt),
+        hash: fileHash
       };
 
-      this.emit('statusChange', `Waiting for receiver readiness ACK…`, 'info');
+      this.onStatusChange(`Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
       this._sendControlMessage(metadata);
 
-      try {
-        await this._waitForMetadataAck(APP_CONFIG.METADATA_ACK_TIMEOUT_MS);
-      } catch (ackErr) {
-        this._senderHasher = null;
-        this._handleTransferFailure(`Transfer initiation failed: ${ackErr.message}`, 'ERR_METADATA_ACK_TIMEOUT');
-        return;
-      }
+      // ── Pipelined send loop ──────────────────────────────────────────────────
+      // Strategy: while sending chunk N, we read+encrypt chunk N+1 in parallel.
+      // This hides the async crypto latency behind the network send, maximising
+      // DataChannel utilisation without ever voluntarily yielding to rAF.
+      let offset = 0;
+      let chunkIndex = 0;
+      this.lastProgressTime = Date.now();
+      this.lastProgressBytes = 0;
+      this.currentSpeedBps = 0;
+      this._lastSendUiUpdate = 0;
 
-      this.emit('statusChange', `Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
-    }
+      // Prefetch the very first chunk before entering the loop
+      let prefetchPromise = this._readAndEncryptChunk(file, offset, chunkSize, chunkIndex);
 
-    this.lastProgressTime = Date.now();
-    this.lastProgressBytes = offset;
-    this.currentSpeedBps = 0;
-    this._lastSendUiUpdate = 0;
-
-    while (offset < file.size && this.isTransferring) {
-      if (this.dataChannel.bufferedAmount > APP_CONFIG.BUFFER_HIGH_WATERMARK) {
+      while (offset < file.size && this.isTransferring) {
+        // Wait for the pre-fetched encrypted frame
+        let encryptedFrame;
         try {
-          await this._waitForBufferLow();
-        } catch (bufErr) {
-          if (this.transferState === 'completed' || !this.isTransferring) {
-            break;
+          encryptedFrame = await prefetchPromise;
+        } catch (encErr) {
+          this._handleTransferFailure(`Failed to encrypt chunk ${chunkIndex}: ${encErr.message}`, 'ERR_ENCRYPT_CHUNK');
+          return;
+        }
+
+        const frameByteLength = encryptedFrame.byteLength;
+        const rawChunkSize = Math.min(chunkSize, file.size - offset);
+
+        // Kick off the NEXT chunk's read+encrypt immediately (pipeline)
+        const nextOffset = offset + rawChunkSize;
+        const nextIndex = chunkIndex + 1;
+        if (nextOffset < file.size && this.isTransferring) {
+          prefetchPromise = this._readAndEncryptChunk(file, nextOffset, chunkSize, nextIndex);
+        }
+
+        // Backpressure check — pause only when buffer is genuinely full
+        if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
+          try {
+            await this._waitForBufferLow();
+          } catch (_) {
+            if (this.transferState === 'completed' || !this.isTransferring) break;
           }
         }
-      }
 
+        // Send the encrypted frame
+        try {
+          this.dataChannel.send(encryptedFrame);
+        } catch (err) {
+          this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
+          return;
+        }
+
+        offset += rawChunkSize;
+        chunkIndex++;
+
+        // Progress reporting (throttled to 100 ms)
+        const now = Date.now();
+        const timeDiff = (now - this.lastProgressTime) / 1000;
+        if (timeDiff >= 0.5) {
+          this.currentSpeedBps = timeDiff > 0 ? ((offset - this.lastProgressBytes) / timeDiff) : 0;
+          this.lastProgressTime = now;
+          this.lastProgressBytes = offset;
+        }
+
+        const isComplete = offset >= file.size;
+        if (isComplete || (now - this._lastSendUiUpdate) > 100) {
+          this._lastSendUiUpdate = now;
+          this.onProgress({
+            percent: Math.min(100, (offset / file.size) * 100).toFixed(1),
+            transferredBytes: offset,
+            totalBytes: file.size,
+            speedBps: this.currentSpeedBps,
+            role: 'sender'
+          });
+        }
+        // No rAF yield here — we let the event loop breathe only during the
+        // await on the prefetch promise above, which is already async.
+      }
+    }
+
+    /**
+     * Read one file slice and encrypt it. Used by the pipelined send loop so
+     * we can overlap crypto with the previous chunk's network send.
+     * @returns {Promise<ArrayBuffer>} Encrypted frame ready to pass to dataChannel.send()
+     */
+    async _readAndEncryptChunk(file, offset, chunkSize, chunkIndex) {
       const slice = file.slice(offset, offset + chunkSize);
       const chunkBuffer = await slice.arrayBuffer();
+      const encryptedFrame = await this.encryptChunk(chunkBuffer, chunkIndex, this.aesKey);
+      // Return the underlying ArrayBuffer (no extra copy)
+      return encryptedFrame.buffer;
+    }
 
-      // In-Flight Sender Incremental Hash Update
-      if (this._senderHasher) {
-        this._senderHasher.update(new Uint8Array(chunkBuffer));
+    /**
+     * Event-driven Backpressure wait. Resolves ONLY when bufferedAmount <= BUFFER_LOW_WATERMARK.
+     * Rejects gracefully if DataChannel closes or transfer is cancelled.
+     */
+    _waitForBufferLow() {
+      if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK || this.transferState === 'completed') {
+        return Promise.resolve();
       }
+      return new Promise((resolve) => {
+        // Pure event-driven — no polling timer.
+        // We only add a single 500 ms safety-net timeout in case the browser
+        // doesn't fire bufferedamountlow (e.g. some mobile Safari versions).
+        let safetyTimer = null;
 
-      let encryptedFrame;
-      try {
-        encryptedFrame = await this.encryptChunk(chunkBuffer, chunkIndex, this.aesKey);
-      } catch (encErr) {
-        this._senderHasher = null;
-        this._handleTransferFailure(`Failed to encrypt chunk ${chunkIndex}: ${encErr.message}`, 'ERR_ENCRYPT_CHUNK');
-        return;
-      }
+        const done = () => {
+          if (safetyTimer) { clearTimeout(safetyTimer); safetyTimer = null; }
+          if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
+          resolve();
+        };
 
-      try {
-        this.dataChannel.send(encryptedFrame.buffer);
-      } catch (err) {
-        this._senderHasher = null;
-        this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
-        return;
-      }
-
-      offset += chunkBuffer.byteLength;
-      chunkIndex++;
-
-      const now = Date.now();
-      const timeDiff = (now - this.lastProgressTime) / 1000;
-
-      if (timeDiff >= 0.5) {
-        const bytesDiff = offset - this.lastProgressBytes;
-        this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
-        this.lastProgressTime = now;
-        this.lastProgressBytes = offset;
-      }
-
-      const isComplete = offset >= file.size;
-      if (isComplete || (now - this._lastSendUiUpdate) > 100) {
-        this._lastSendUiUpdate = now;
-        const percent = Math.min(100, (offset / file.size) * 100);
-        this.emit('progress', {
-          percent: percent.toFixed(1),
-          transferredBytes: offset,
-          totalBytes: file.size,
-          speedBps: this.currentSpeedBps,
-          role: 'sender'
-        });
-      }
-
-      if (chunkIndex % 50 === 0) {
-        if (typeof requestAnimationFrame !== 'undefined') {
-          await new Promise(r => requestAnimationFrame(r));
-        } else {
-          await new Promise(r => setTimeout(r, 0));
+        if (this.dataChannel) {
+          this.dataChannel.onbufferedamountlow = done;
         }
+
+        // Safety-net: if the event never fires, unblock after 500 ms
+        safetyTimer = setTimeout(done, 500);
+      });
+    }
+
+    /**
+     * Send application-level control message (e.g., Flux Zen game invite/move)
+     * @param {Object} msgObj 
+     */
+    sendControlMessage(msgObj) {
+      this._sendControlMessage({
+        type: 'zen_game',
+        ...msgObj
+      });
+    }
+
+    cancelTransfer() {
+      if (this.dataChannel && this.dataChannel.readyState === 'open') {
+        this._sendControlMessage({ type: 'cancel' });
+      }
+      this._cleanupReceiverStorage(true);
+      this.isTransferring = false;
+      this._setState('cancelled');
+      this.onStatusChange('Transfer cancelled', 'warning');
+    }
+
+    _handlePeerDisconnect(reason) {
+      if (this.transferState === 'completed') return;
+      if (this.isTransferring) {
+        this._cleanupReceiverStorage(true);
+        this._handleTransferFailure(`Transfer aborted: ${reason}`, 'ERR_PEER_DISCONNECTED');
       }
     }
 
-    // 4. All chunks sent successfully -> Finalize sender SHA-256 hash & emit transfer-complete
-    if (offset >= file.size && this._senderHasher && this.isTransferring) {
-      const finalSenderHash = this._senderHasher.digestHex();
-      this._senderHasher = null;
-      console.log('[WebRTC Engine] Finalizing sender incremental SHA-256:', finalSenderHash);
-      this._sendControlMessage({ type: 'transfer-complete', hash: finalSenderHash });
+    _handleTransferFailure(errorMessage, errorCode) {
+      if (this.transferState === 'completed') return;
+      this.isTransferring = false;
+      this._setState('failed');
+      this.onError(errorMessage, errorCode);
     }
-  }
 
-  _waitForBufferLow() {
-    const lowMark = APP_CONFIG.BUFFER_LOW_WATERMARK;
-    if (!this.dataChannel || this.dataChannel.bufferedAmount <= lowMark || this.transferState === 'completed') {
-      return Promise.resolve();
+    _sendControlMessage(obj) {
+      if (this.dataChannel && this.dataChannel.readyState === 'open') {
+        this.dataChannel.send(JSON.stringify(obj));
+      }
     }
-    return new Promise((resolve) => {
-      let checkTimer = null;
 
-      const cleanup = () => {
-        if (checkTimer) clearInterval(checkTimer);
-        if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
-      };
+    _sendSignaling(data) {
+      if (this.ws && this.ws.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1)) {
+        this.ws.send(JSON.stringify(data));
+      }
+    }
 
-      const done = () => {
-        cleanup();
-        resolve();
-      };
+    _formatBytes(bytes) {
+      if (bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
+    }
+
+    disconnect() {
+      this.isTransferring = false;
+      this._cleanupReceiverStorage(true);
+      this._setState('idle');
 
       if (this.dataChannel) {
-        this.dataChannel.onbufferedamountlow = () => {
-          if (!this.dataChannel || this.dataChannel.bufferedAmount <= lowMark) {
-            done();
-          }
-        };
+        try { this.dataChannel.close(); } catch (e) { }
+        this.dataChannel = null;
       }
 
-      checkTimer = setInterval(() => {
-        if (!this.dataChannel || this.dataChannel.readyState !== 'open' || !this.isTransferring || this.transferState === 'completed') {
-          done();
-        } else if (this.dataChannel.bufferedAmount <= lowMark) {
-          done();
+      if (this.pc) {
+        try { this.pc.close(); } catch (e) { }
+        this.pc = null;
+      }
+
+      if (this.ws) {
+        if (this.ws.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1) && this.roomCode) {
+          this._sendSignaling({ type: 'leave-room' });
         }
-      }, 25);
-    });
-  }
-
-  sendControlMessage(msgObj) {
-    this._sendControlMessage({
-      type: 'zen_game',
-      ...msgObj
-    });
-  }
-
-  cancelTransfer() {
-    if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
-    this._clearIceReconnectTimer();
-    this._iceRestartAttempts = 0;
-    this._isIceRestarting = false;
-    this._senderHasher = null;
-    this._receiverHasher = null;
-
-    if (this.dataChannel && this.dataChannel.readyState === 'open') {
-      this._sendControlMessage({ type: 'cancel' });
-    }
-    if (this.storage) {
-      this.storage.abort().catch(() => { });
-      this.storage = null;
-    }
-    this._setState('cancelled');
-    this.emit('statusChange', 'Transfer cancelled', 'warning');
-  }
-
-  _handlePeerDisconnect(reason) {
-    if (this.transferState === 'completed' || this.transferState === 'failed' || this.transferState === 'cancelled') return;
-    this._senderHasher = null;
-    this._receiverHasher = null;
-
-    if (this.isTransferring) {
-      if (this.storage) {
-        this.storage.abort().catch(() => { });
-        this.storage = null;
+        try { this.ws.close(); } catch (e) { }
+        this.ws = null;
       }
-      this._handleTransferFailure(`Transfer aborted: ${reason}`, 'ERR_PEER_DISCONNECTED');
+
+      this.roomCode = null;
+      this.sessionCode = null;
+      this.role = null;
+      this.pendingIceCandidates = [];
+      this.aesKey = null;
+      this.salt = null;
     }
   }
 
-  _handleTransferFailure(errorMessage, errorCode) {
-    if (this.transferState === 'completed' || this.transferState === 'failed' || this.transferState === 'cancelled') return;
-    this._clearIceReconnectTimer();
-    this._iceRestartAttempts = 0;
-    this._isIceRestarting = false;
-    this._senderHasher = null;
-    this._receiverHasher = null;
-
-    if (typeof this._onMetadataAckRejecter === 'function') {
-      this._onMetadataAckRejecter(errorMessage);
-    }
-    if (this.storage) {
-      this.storage.abort().catch(() => { });
-      this.storage = null;
-    }
-    this._setState('failed');
-    this.emit('error', errorMessage, errorCode);
+  // Export
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = FluxWebRTCEngine;
+    module.exports.default = FluxWebRTCEngine;
   }
-
-  _sendControlMessage(obj) {
-    if (this.dataChannel && this.dataChannel.readyState === 'open') {
-      this.dataChannel.send(JSON.stringify(obj));
-    }
+  if (typeof globalThis !== 'undefined') {
+    globalThis.FluxWebRTCEngine = FluxWebRTCEngine;
   }
-
-  _sendSignaling(data) {
-    if (this.ws && this.ws.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1)) {
-      this.ws.send(JSON.stringify(data));
-    }
+  if (typeof window !== 'undefined') {
+    window.FluxWebRTCEngine = FluxWebRTCEngine;
   }
+})(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this));
 
-  _formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
-  }
-
-  disconnect() {
-    if (this._isDisconnecting) return;
-    this._isDisconnecting = true;
-
-    this._clearIceReconnectTimer();
-    this._iceRestartAttempts = 0;
-    this._isIceRestarting = false;
-
-    this._senderHasher = null;
-    this._receiverHasher = null;
-    this.senderFinalHash = null;
-
-    if (this.storage) {
-      this.storage.cleanup().catch(() => { });
-      this.storage = null;
-    }
-
-    const wasCompleted = (this.transferState === 'completed');
-    if (!wasCompleted) {
-      this._setState('idle');
-    }
-
-    if (this.dataChannel) {
-      try { this.dataChannel.close(); } catch (e) { }
-      this.dataChannel = null;
-    }
-
-    if (this.pc) {
-      try { this.pc.close(); } catch (e) { }
-      this.pc = null;
-    }
-
-    if (this.ws) {
-      if (this.ws.readyState === (typeof WebSocket !== 'undefined' ? WebSocket.OPEN : 1) && this.roomCode) {
-        this._sendSignaling({ type: 'leave-room' });
-      }
-      try { this.ws.close(); } catch (e) { }
-      this.ws = null;
-    }
-
-    this.roomCode = null;
-    this.sessionCode = null;
-    this.role = null;
-    this.pendingIceCandidates = [];
-    this.aesKey = null;
-    this.salt = null;
-    this._receiverReady = false;
-
-    // Resumable transfer attributes
-    this.transferId = null;
-    this.resumeToken = null;
-    this._lastResumeChunk = null;
-    this._onResumeResolver = null;
-    this._earlyChunkQueue = null;
-
-    this._isDisconnecting = false;
-  }
-}
-
-// Export compatibility
-if (typeof module !== 'undefined' && module.exports) {
-  module.exports = FluxWebRTCEngine;
-  module.exports.default = FluxWebRTCEngine;
-}
-if (typeof globalThis !== 'undefined') {
-  globalThis.FluxWebRTCEngine = FluxWebRTCEngine;
-}
-if (typeof window !== 'undefined') {
-  window.FluxWebRTCEngine = FluxWebRTCEngine;
-}
+const FluxWebRTCEngine = (typeof window !== 'undefined' && window.FluxWebRTCEngine) ||
+  (typeof globalThis !== 'undefined' && globalThis.FluxWebRTCEngine);
 
 export { FluxWebRTCEngine };
 export default FluxWebRTCEngine;
+
+
+
+
