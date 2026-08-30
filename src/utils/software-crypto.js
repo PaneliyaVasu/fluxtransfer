@@ -471,12 +471,7 @@ const SoftwareCrypto = {
   aesGcmDecrypt
 };
 
-if (typeof process !== 'undefined' && process.versions && process.versions.node && typeof module !== 'undefined' && module.exports) {
-  module.exports = SoftwareCrypto;
-  module.exports.default = SoftwareCrypto;
-  module.exports.createSoftwareCrypto = createSoftwareCrypto;
-  module.exports.installSoftwareCrypto = installSoftwareCrypto;
-}
+
 
 export {
   createSoftwareCrypto,

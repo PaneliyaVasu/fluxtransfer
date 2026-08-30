@@ -20,16 +20,24 @@ export default function Navbar({ onToggleZen }) {
       }}
     >
       {/* Brand Logo */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div className="glass-logo-box">
-          <ArrowUpDown size={18} />
-        </div>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
         <a
           href="/"
           aria-label="FluxTransfer home"
-          style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-title)', letterSpacing: '-0.02em', margin: 0, textDecoration: 'none' }}
+          style={{ display: 'flex', alignItems: 'center', textDecoration: 'none' }}
         >
-          FluxTransfer
+          <img
+            src="/assets/logo-light-transparent.png"
+            alt="FluxTransfer Logo Light"
+            className="nav-logo-icon-light"
+            style={{ height: '30px', width: 'auto', objectFit: 'contain' }}
+          />
+          <img
+            src="/assets/logo-dark-transparent.png"
+            alt="FluxTransfer Logo Dark"
+            className="nav-logo-icon-dark"
+            style={{ height: '30px', width: 'auto', objectFit: 'contain' }}
+          />
         </a>
       </div>
 
