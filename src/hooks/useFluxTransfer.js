@@ -204,6 +204,7 @@ export function useFluxTransfer() {
 
     engine.on('error', (err) => {
       setErrorMessage(typeof err === 'string' ? err : err?.message || 'Transfer error occurred');
+      setEngineState('failed');
     });
 
     return () => {
@@ -262,6 +263,7 @@ export function useFluxTransfer() {
       engineRef.current.connect(code, code);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to create send session');
+      setEngineState('failed');
     }
   }, []);
 
@@ -269,6 +271,7 @@ export function useFluxTransfer() {
     const cleanCode = String(code || '').trim();
     if (!isValidSessionCode(cleanCode) || !engineRef.current) {
       setErrorMessage('Invalid session code format');
+      setEngineState('failed');
       return;
     }
     setRole('receiver');
@@ -277,6 +280,7 @@ export function useFluxTransfer() {
       engineRef.current.connect(cleanCode, cleanCode);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to connect to pairing code');
+      setEngineState('failed');
     }
   }, []);
 

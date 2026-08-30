@@ -53,6 +53,7 @@ export default function TransferDashboard({ transfer, addToast }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [shareableOrigin, setShareableOrigin] = useState(
     typeof window !== 'undefined' ? window.location.origin : ''
   );
@@ -360,8 +361,8 @@ export default function TransferDashboard({ transfer, addToast }) {
   };
 
   const isCompleted = engineState === 'completed';
-  const isSending = role === 'sender' || selectedFiles.length > 0;
-  const isReceiving = role === 'receiver' || receivedFiles.length > 0 || Boolean(receivedFileUrl);
+  const isSending = role === 'sender';
+  const isReceiving = role === 'receiver';
   const archiveCount = Math.max(packedFileCount || 0, packedFiles.length, selectedFiles.length, 1);
   const isZipArchive = archiveCount > 1 || /\.zip$/i.test(currentFileName || receivedFileName || '');
   const contentsList = packedFiles.length
@@ -379,246 +380,160 @@ export default function TransferDashboard({ transfer, addToast }) {
     ? packProgress
     : (packProgress >= 100 && selectedFiles.length > 1 ? 100 : transferProgress);
 
-  const renderTransferProgressCard = () => (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        background: 'var(--glass-card-bg)',
-        padding: '20px 18px',
-        borderRadius: '18px',
-        border: '1px solid var(--glass-card-border)',
-        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.04)'
-      }}
-    >
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <div>
-            <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '2px' }}>
-              Transfer Progress
-            </h4>
-            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-              {isCompleted
-                ? (isSending
-                  ? (isZipArchive ? `Zip archive sent (${archiveCount} files)` : 'File sent successfully to peer')
-                  : (isZipArchive ? `Zip archive received (${archiveCount} files)` : 'File received successfully'))
-                : isPacking && engineState !== 'transferring'
-                ? `Creating zip archive${archiveCount > 1 ? ` · ${archiveCount} files` : ''}`
-                : (isSending
-                  ? (isZipArchive ? 'Sending zip archive to peer' : 'Sending file to peer')
-                  : (isZipArchive ? 'Receiving zip archive from peer' : 'Receiving file from peer'))}
-            </div>
-          </div>
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              padding: '4px 12px',
-              borderRadius: '999px',
-              whiteSpace: 'nowrap',
-              background: isCompleted
-                ? 'rgba(16, 185, 129, 0.12)'
-                : engineState === 'transferring'
-                ? 'rgba(124, 58, 237, 0.12)'
-                : engineState === 'connecting'
-                ? 'rgba(245, 158, 11, 0.12)'
-                : selectedFile
-                ? 'rgba(59, 130, 246, 0.12)'
-                : 'rgba(148, 163, 184, 0.12)',
-              color: isCompleted
-                ? '#10b981'
-                : engineState === 'transferring'
-                ? '#7c3aed'
-                : engineState === 'connecting'
-                ? '#d97706'
-                : selectedFile
-                ? '#3b82f6'
-                : '#64748b',
-              border: `1px solid ${
-                isCompleted
-                  ? 'rgba(16, 185, 129, 0.3)'
-                  : engineState === 'transferring'
-                  ? 'rgba(124, 58, 237, 0.3)'
-                  : engineState === 'connecting'
-                  ? 'rgba(245, 158, 11, 0.3)'
-                  : selectedFile
-                  ? 'rgba(59, 130, 246, 0.3)'
-                  : 'rgba(148, 163, 184, 0.3)'
-              }`
-            }}
-          >
-            <span
-              style={{
-                width: '6px',
-                height: '6px',
-                borderRadius: '50%',
-                backgroundColor: isCompleted
-                  ? '#10b981'
-                  : engineState === 'transferring'
-                  ? '#7c3aed'
-                  : engineState === 'connecting'
-                  ? '#f59e0b'
-                  : selectedFile
-                  ? '#3b82f6'
-                  : '#94a3b8'
-              }}
-            ></span>
-            {isCompleted
-              ? 'Completed'
-              : engineState === 'transferring'
-              ? `${transferProgress}% Transferring`
-              : isPacking
-              ? `${packProgress}% Zipping`
-              : engineState === 'connecting'
-              ? 'Connecting...'
-              : selectedFiles.length
-              ? (isZipArchive && packProgress >= 100 ? 'Zip ready' : 'Ready for Receiver')
-              : 'Idle'}
-          </span>
-        </div>
+  const renderTransferProgressCard = () => {
+    const percent = Math.round(progressPercent);
+    const formattedTransferred = formatBytes(transferredBytes || totalBytes);
+    const formattedTotal = formatBytes(totalBytes || selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0));
+    const itemCount = Math.max(packedFileCount || 0, packedFiles.length, selectedFiles.length, 1);
 
-        <div style={{ width: '100%', background: 'rgba(203, 213, 225, 0.35)', borderRadius: '999px', height: '10px', overflow: 'hidden', marginBottom: '18px' }}>
-          <div
-            style={{
-              height: '100%',
-              width: `${progressPercent}%`,
-              background: isCompleted ? 'linear-gradient(90deg, #10b981, #059669)' : 'linear-gradient(90deg, #4f46e5, #7c3aed)',
-              borderRadius: '999px',
-              transition: 'width 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-              boxShadow: '0 0 10px rgba(124, 58, 237, 0.4)'
-            }}
-          ></div>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            background: 'var(--glass-card-bg)',
-            padding: '12px 14px',
-            borderRadius: '14px',
-            border: '1px solid var(--glass-card-border)',
-            marginBottom: '16px'
-          }}
-        >
-          <div
-            style={{
-              width: '42px',
-              height: '42px',
-              borderRadius: '12px',
-              background: 'rgba(124, 58, 237, 0.1)',
-              color: '#7c3aed',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}
-          >
-            <FileText size={20} />
+    if (isCompleted) {
+      return (
+        <div className="transfer-success-card-obsidian">
+          {/* Green Check Icon Badge */}
+          <div className="success-icon-badge">
+            <Check size={22} color="#10b981" strokeWidth={2.5} />
           </div>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-title)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: '4px' }}>
-              {isZipArchive && archiveCount > 1 ? `${activeName} · ${archiveCount} files` : activeName}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', gap: '8px' }}>
-              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {formatBytes(transferredBytes)} / {formatBytes(totalBytes || selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}
-              </span>
-              {engineState === 'transferring' && (
-                <span style={{ fontWeight: 700, color: '#7c3aed', flexShrink: 0 }}>⚡ {transferSpeed}</span>
-              )}
-            </div>
+          {/* Subtitle & Title Header */}
+          <div className="success-header-text">
+            <div className="success-meta-tag">TRANSFER SUCCESS</div>
+            <h3 className="success-title">Transfer Complete</h3>
+            <p className="success-description">
+              Your file was transferred directly with zero loss.
+            </p>
           </div>
-        </div>
 
-        {contentsList.length > 1 && (
-          <div style={{ maxHeight: '112px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' }}>
-            {contentsList.map((item, idx) => (
-              <div key={`${item.name}-${idx}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '0.75rem', color: isCompleted ? '#059669' : 'var(--text-muted)' }}>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {isCompleted ? '✓' : '•'} {item.name}
-                </span>
-                {item.size ? (
-                  <span style={{ flexShrink: 0 }}>{formatBytes(item.size)}</span>
-                ) : null}
+
+
+          {/* Transferred File Item Card */}
+          <div className="success-file-card">
+            <div className="file-item-left">
+              <div className="file-type-icon-box">
+                <FileText size={18} color="#a855f7" />
               </div>
-            ))}
+              <span className="file-item-name">{activeName}</span>
+            </div>
+            <span className="file-item-size">{formattedTotal}</span>
           </div>
-        )}
-      </div>
 
-      <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
-        {(receivedFileUrl || receivedFiles.length > 0) && (
+          {/* Action Buttons Below */}
+          <div className="success-actions-row">
+            {receivedFileUrl ? (
+              <button
+                type="button"
+                onClick={handleDownloadFile}
+                className="primary-glass-download-btn"
+              >
+                <Download size={18} /> Download File
+              </button>
+            ) : null}
+
+            {isSending ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="primary-glass-download-btn"
+                >
+                  Send More Files
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="secondary-glass-done-btn"
+                >
+                  Done
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="secondary-glass-done-btn"
+              >
+                Done
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Live Transfer View
+    const etaText = transfer.etaSeconds
+      ? `About ${transfer.etaSeconds} second${transfer.etaSeconds === 1 ? '' : 's'} remaining`
+      : 'Calculating remaining time...';
+
+    return (
+      <div className="transfer-progress-card-obsidian">
+        {/* Top Header Row: Icon + File Name & Subtitle on Left, Big % & Speed on Right */}
+        <div className="transfer-card-header">
+          <div className="transfer-file-info">
+            {/* Animated Spinner Icon Container */}
+            <div className="spinner-icon-box">
+              <span className="spinner-ring" />
+            </div>
+
+            <div className="file-details">
+              <h4 className="file-title">
+                {isSending ? `Sending ${activeName}` : `Receiving ${activeName}`}
+              </h4>
+              <div className="connection-subtitle">
+                Connected to {role === 'sender' ? 'Receiver Device' : 'Sender Device'}
+              </div>
+            </div>
+          </div>
+
+          {/* Big % and Speed metrics */}
+          <div className="transfer-metrics-right">
+            <div className="big-percent">{percent}%</div>
+            <div className="speed-text">{transferSpeed || '0 MB/S'}</div>
+          </div>
+        </div>
+
+        {/* Progress Bar Track */}
+        <div className="progress-bar-container">
+          <div
+            className="progress-bar-fill"
+            style={{ width: `${Math.max(2, Math.min(100, percent))}%` }}
+          />
+        </div>
+
+        {/* Metrics Row: Transferred MBs on Left, Remaining Time on Right */}
+        <div className="transfer-submetrics-row">
+          <div className="transferred-mbs">
+            {formattedTransferred} of {formattedTotal} transferred
+          </div>
+          <div className="remaining-eta">
+            {etaText}
+          </div>
+        </div>
+
+        <div className="transfer-card-divider" />
+
+        {/* Action Buttons Row */}
+        <div className="transfer-actions-row">
           <button
-            onClick={handleDownloadFile}
-            className="glass-btn glass-btn-dark"
-            style={{
-              flex: 1,
-              height: '46px',
-              padding: '0 16px',
-              borderRadius: '14px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '6px',
-              fontSize: '0.88rem',
-              fontWeight: 700,
-              whiteSpace: 'nowrap',
-              cursor: 'pointer'
-            }}
+            type="button"
+            onClick={() => setIsPaused(!isPaused)}
+            className="pause-btn-capsule"
           >
-            {isZipArchive ? 'Download Zip' : 'Download File'} <Download size={15} />
+            <span className="pause-icon">{isPaused ? '▶' : '▌▌'}</span> {isPaused ? 'RESUME TRANSFER' : 'PAUSE TRANSFER'}
           </button>
-        )}
 
-        {isCompleted && isSending ? (
           <button
+            type="button"
             onClick={handleCancel}
-            className="glass-btn glass-btn-dark"
-            style={{
-              flex: 1,
-              height: '46px',
-              padding: '0 16px',
-              borderRadius: '14px',
-              fontSize: '0.88rem',
-              fontWeight: 700,
-              whiteSpace: 'nowrap',
-              cursor: 'pointer'
-            }}
+            className="cancel-text-btn"
           >
-            Send More Files ✨
+            CANCEL TRANSFER
           </button>
-        ) : (
-          <button
-            onClick={handleCancel}
-            className="glass-btn"
-            style={{
-              flex: receivedFileUrl ? '0 0 80px' : 1,
-              height: '46px',
-              padding: '0 12px',
-              borderRadius: '14px',
-              fontSize: '0.88rem',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              opacity: 0.85,
-              cursor: 'pointer'
-            }}
-          >
-            {isCompleted ? 'Done' : 'Cancel'}
-          </button>
-        )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
-  const activeTransfer = engineState === 'TRANSFERRING' || (role === 'receiver' && (engineState === 'CONNECTING' || engineState === 'CONNECTED'));
+  const activeTransfer = engineState === 'connected' || engineState === 'transferring' || engineState === 'completed';
   const hideToggle = activeTransfer || (selectedFiles.length > 0 && activeTab === 'send');
 
   return (
@@ -649,31 +564,7 @@ export default function TransferDashboard({ transfer, addToast }) {
           {/* Send View */}
           {activeTab === 'send' && (
             <div className="card-send" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-              {selectedFiles.length > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
-                  <button
-                    onClick={handleCancel}
-                    className="glass-btn"
-                    style={{
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '10px',
-                      padding: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer',
-                      border: '1px solid var(--glass-card-border)',
-                      background: 'var(--glass-card-bg)',
-                      color: 'var(--text-title)',
-                      transition: 'all 0.2s ease'
-                    }}
-                    title="Cancel / Change File"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              )}
+
 
               {activeTransfer ? (
                 renderTransferProgressCard()
@@ -765,7 +656,17 @@ export default function TransferDashboard({ transfer, addToast }) {
                       <div className="pin-group">
                         {(pairingCode || '---').slice(0, 3).split('').map((char, idx) => (
                           <div key={idx} className="pin-slot-wrapper">
-                            <div className="pin-slot-card white-group has-value" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div
+                              className="pin-slot-card white-group has-value"
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 900,
+                                fontSize: '1.7rem',
+                                lineHeight: 1
+                              }}
+                            >
                               {char}
                             </div>
                             <span className="slot-indicator-dash white-dash active" />
@@ -782,7 +683,17 @@ export default function TransferDashboard({ transfer, addToast }) {
                       <div className="pin-group">
                         {(pairingCode || '------').slice(3, 6).split('').map((char, idx) => (
                           <div key={idx} className="pin-slot-wrapper">
-                            <div className="pin-slot-card blue-group has-value" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div
+                              className="pin-slot-card blue-group has-value"
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: 900,
+                                fontSize: '1.7rem',
+                                lineHeight: 1
+                              }}
+                            >
                               {char}
                             </div>
                             <span className="slot-indicator-dash blue-dash active" />
@@ -801,7 +712,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                   <div className="live-status-badge">
                     <span className="pulsing-dot-blue" />
                     <span className="live-status-text">
-                      {engineState === 'CONNECTED' ? 'RECEIVER CONNECTED' : 'WAITING FOR RECEIVER...'}
+                      {engineState === 'connected' ? 'RECEIVER CONNECTED' : 'WAITING FOR RECEIVER...'}
                     </span>
                   </div>
 
@@ -814,7 +725,7 @@ export default function TransferDashboard({ transfer, addToast }) {
           {activeTab === 'receive' && (
             <div className="card-receive" style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
 
-              {isSending ? (
+              {activeTransfer ? (
                 renderTransferProgressCard()
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between' }}>
@@ -828,17 +739,31 @@ export default function TransferDashboard({ transfer, addToast }) {
                     </p>
                   </div>
 
-                  {/* Top Status Pill Badge */}
+                  {/* Top Status Pill Badge (Electric Blue for All States) */}
                   <div style={{ textAlign: 'center', marginBottom: '14px' }}>
-                    {inputCode.replace(/\s/g, '').length === 6 ? (
-                      <div className="code-verified-pill">
-                        <Check size={14} /> CODE VERIFIED <span style={{ letterSpacing: '0.15em', marginLeft: '6px' }}>●●●●●●</span>
-                      </div>
-                    ) : (
-                      <div className="code-pending-pill">
-                        <span className="pulsing-dot-blue" /> READY TO VERIFY
-                      </div>
-                    )}
+                    <div className="code-pending-pill">
+                      {engineState === 'failed' ? (
+                        <>
+                          <X size={14} /> INVALID CODE — TRY AGAIN
+                        </>
+                      ) : (engineState === 'connecting' || engineState === 'pairing') ? (
+                        <>
+                          <span className="pulsing-dot-blue" /> CONNECTING TO SENDER...
+                        </>
+                      ) : (engineState === 'connected' || engineState === 'transferring') ? (
+                        <>
+                          <Check size={14} /> CODE VERIFIED & CONNECTED <span style={{ letterSpacing: '0.15em', marginLeft: '6px' }}>●●●●●●</span>
+                        </>
+                      ) : inputCode.replace(/\s/g, '').length === 6 ? (
+                        <>
+                          <span className="pulsing-dot-blue" /> VERIFYING CODE...
+                        </>
+                      ) : (
+                        <>
+                          <span className="pulsing-dot-blue" /> ENTER 6-DIGIT CODE
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   {/* Obsidian PIN Slot Track (Matching Reference Screenshots) */}

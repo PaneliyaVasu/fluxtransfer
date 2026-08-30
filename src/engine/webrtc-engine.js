@@ -510,6 +510,14 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
     }
 
+    onError(err, code) {
+      console.error('[WebRTC Engine] Error:', err, code);
+      this._setState('failed');
+      if (typeof this._onErrorCb === 'function') {
+        this._onErrorCb(typeof err === 'string' ? err : err?.message || 'Error', code);
+      }
+    }
+
     /**
      * Event listener helper for UI integration
      */
@@ -542,7 +550,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           this.onRoomCreated = (data) => fn(data);
           break;
         case 'error':
-          this.onError = (err, code) => fn(typeof err === 'string' ? err : err?.message || 'Error', code);
+          this._onErrorCb = fn;
           break;
         case 'peerJoined':
           this.onPeerJoined = fn;
