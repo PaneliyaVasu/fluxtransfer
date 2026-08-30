@@ -28,19 +28,19 @@ export default function HeroSection() {
         {/* Overlay Content Centered Inside/Over the 3D Glass Cloud */}
         <div className="hero-content">
 
-          {/* Floating Circular Brand Logo Icon Badge */}
-          <div className="hero-arrow-badge" style={{ padding: '0', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {/* Static Brand Logo Icon Badge */}
+          <div className="hero-arrow-badge" style={{ padding: '0', borderRadius: '16px', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <img
               src="/assets/logo-icon-light.png"
               alt="FluxTransfer Brand Icon Light"
               className="nav-logo-icon-light"
-              style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+              style={{ width: '100%', height: '100%', borderRadius: '16px', objectFit: 'cover' }}
             />
             <img
               src="/assets/logo-icon-dark.png"
               alt="FluxTransfer Brand Icon Dark"
               className="nav-logo-icon-dark"
-              style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+              style={{ width: '100%', height: '100%', borderRadius: '16px', objectFit: 'cover' }}
             />
           </div>
 

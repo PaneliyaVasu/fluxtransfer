@@ -159,32 +159,22 @@ body:not(.view-transition-active) *::after {
 }
 
 .hero-arrow-badge {
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 10px;
-  background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1.5px solid rgba(255, 255, 255, 0.95);
-  box-shadow:
-    inset 0 1.5px 0 0 rgba(255, 255, 255, 1),
-    inset 0 -1.5px 3px 0 rgba(255, 255, 255, 0.4),
-    0 10px 24px -2px rgba(124, 58, 237, 0.18);
-  color: #7c3aed;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  background: transparent;
+  border: none;
+  box-shadow: 0 10px 24px -2px rgba(124, 58, 237, 0.18);
+  transition: none !important;
 }
 
 .hero-arrow-badge:hover {
-  background: rgba(255, 255, 255, 0.65);
-  box-shadow:
-    inset 0 1.5px 0 0 rgba(255, 255, 255, 1),
-    inset 0 -1.5px 3px 0 rgba(255, 255, 255, 0.5),
-    0 14px 30px -2px rgba(124, 58, 237, 0.28);
-  transform: translateY(-2px) scale(1.05);
+  transform: none !important;
+  box-shadow: 0 10px 24px -2px rgba(124, 58, 237, 0.18) !important;
 }
 
 .hero-title {

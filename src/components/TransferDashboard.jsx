@@ -614,7 +614,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                         margin: '0 auto 14px auto'
                       }}
                     >
-                      <Upload size={26} color="#7c3aed" />
+                      <CloudUpload size={28} color="#7c3aed" />
                     </div>
                     <h4 className="dropzone-title" style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
                       Ready to share?
