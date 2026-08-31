@@ -3,6 +3,7 @@ import { installSoftwareCrypto } from '../utils/software-crypto.js';
 import FluxWebRTCEngine from '../engine/webrtc-engine.js';
 import { generateSessionCode, isValidSessionCode } from '../config/app-config.js';
 import { createZipArchive, suggestZipName } from '../utils/zip-files.js';
+import { asDownloadFile, isIosDevice, triggerBrowserDownload } from '../utils/save-received-file.js';
 
 if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   installSoftwareCrypto(globalThis);
@@ -15,22 +16,6 @@ function normalizeFiles(fileOrFiles) {
   }
   if (Array.isArray(fileOrFiles)) return fileOrFiles.filter(Boolean);
   return [fileOrFiles];
-}
-
-function triggerBrowserDownload(file, url) {
-  try {
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name || 'received-file';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      if (document.body.contains(a)) document.body.removeChild(a);
-    }, 1000);
-  } catch (downloadErr) {
-    console.warn('[FluxTransfer] Auto-download error:', downloadErr);
-  }
 }
 
 export function useFluxTransfer() {
@@ -53,6 +38,8 @@ export function useFluxTransfer() {
   const [receivedFileUrl, setReceivedFileUrl] = useState(null);
   const [receivedFileName, setReceivedFileName] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState('');
+  const [isPaused, setIsPaused] = useState(false);
 
   const engineRef = useRef(null);
   const selectedFilesRef = useRef([]);
@@ -124,6 +111,17 @@ export function useFluxTransfer() {
 
     engine.on('stateChange', (state) => {
       setEngineState(state);
+      if (state === 'cancelled' || state === 'completed' || state === 'failed' || state === 'idle') {
+        setIsPaused(false);
+      }
+    });
+
+    engine.on('pauseChange', (paused) => {
+      setIsPaused(Boolean(paused));
+    });
+
+    engine.on('statusChange', (status) => {
+      if (typeof status === 'string' && status) setConnectionStatus(status);
     });
 
     engine.on('dataChannelOpen', () => {
@@ -164,9 +162,9 @@ export function useFluxTransfer() {
       setTransferredBytes(info.transferredBytes || 0);
       setTotalBytes(info.totalBytes || 0);
       if (info.fileName) setCurrentFileName(info.fileName);
-      if (info.speedBps) {
-        const speedMB = (info.speedBps / (1024 * 1024)).toFixed(2);
-        setTransferSpeed(`${speedMB} MB/s`);
+      if (typeof info.speedBps === 'number' && Number.isFinite(info.speedBps)) {
+        const speedMB = info.speedBps / (1024 * 1024);
+        setTransferSpeed(`${speedMB >= 10 ? speedMB.toFixed(1) : speedMB.toFixed(2)} MB/s`);
         const remaining = (info.totalBytes || 0) - (info.transferredBytes || 0);
         setEtaSeconds(info.speedBps > 0 ? Math.max(0, Math.round(remaining / info.speedBps)) : 0);
       }
@@ -187,24 +185,22 @@ export function useFluxTransfer() {
 
       const finalName = fileName || blob.name || 'received-file';
       const mime = fileType || blob.type || 'application/octet-stream';
-      const downloadFile = (blob instanceof File && blob.name === finalName)
-        ? blob
-        : new File([blob], finalName, { type: mime || blob.type || 'application/octet-stream' });
-
-      const url = URL.createObjectURL(downloadFile);
-      receivedUrlsRef.current.push(url);
+      const downloadFile = asDownloadFile(blob, finalName, mime);
+      const skipBlobUrl = isIosDevice();
+      const url = skipBlobUrl ? null : URL.createObjectURL(downloadFile);
+      if (url) receivedUrlsRef.current.push(url);
 
       setReceivedFiles((prev) => [...prev, { name: finalName, url, blob: downloadFile, type: mime }]);
       setReceivedFileBlob(downloadFile);
       setReceivedFileUrl(url);
       setReceivedFileName(finalName);
       setCurrentFileName(finalName);
-      triggerBrowserDownload(downloadFile, url);
+      if (!skipBlobUrl) triggerBrowserDownload(downloadFile, url);
     });
 
     engine.on('error', (err) => {
       setErrorMessage(typeof err === 'string' ? err : err?.message || 'Transfer error occurred');
-      setEngineState('failed');
+      setEngineState((prev) => (prev === 'completed' || prev === 'cancelled' ? prev : 'failed'));
     });
 
     return () => {
@@ -226,8 +222,12 @@ export function useFluxTransfer() {
     setTotalBytes(files.reduce((sum, file) => sum + (file.size || 0), 0));
     setRole('sender');
     setErrorMessage('');
+    setIsPaused(false);
 
-    if (files.length > 1) {
+    const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    const zipNow = files.length > 1 && totalBytes > 0 && totalBytes <= 32 * 1024 * 1024;
+
+    if (zipNow) {
       const zipName = suggestZipName(files);
       setCurrentFileName(zipName);
       setIsPacking(true);
@@ -274,17 +274,24 @@ export function useFluxTransfer() {
       setEngineState('failed');
       return;
     }
+    const engine = engineRef.current;
+    const busy = engine.transferState && engine.transferState !== 'idle' && engine.transferState !== 'failed' && engine.transferState !== 'cancelled';
+    if (busy && engine.roomCode === cleanCode) {
+      return;
+    }
     setRole('receiver');
     setErrorMessage('');
+    setIsPaused(false);
+    setEngineState('connecting');
     try {
-      engineRef.current.connect(cleanCode, cleanCode);
+      engine.connect(cleanCode, cleanCode);
     } catch (err) {
       setErrorMessage(err.message || 'Failed to connect to pairing code');
       setEngineState('failed');
     }
   }, []);
 
-  const cancelTransfer = useCallback(() => {
+  const resetSession = useCallback(() => {
     selectedFilesRef.current = [];
     setSelectedFiles([]);
     setRole(null);
@@ -294,6 +301,7 @@ export function useFluxTransfer() {
     setTransferSpeed('0 MB/s');
     setTransferredBytes(0);
     setTotalBytes(0);
+    setEtaSeconds(0);
     setCurrentFileName('');
     setPackedFileCount(1);
     setPackedFiles([]);
@@ -307,11 +315,36 @@ export function useFluxTransfer() {
     setReceivedFileUrl(null);
     setReceivedFileName('');
     setErrorMessage('');
+    setIsPaused(false);
+    setConnectionStatus('');
     releaseWakeLock();
     if (engineRef.current) {
-      engineRef.current.disconnect();
+      try { engineRef.current.disconnect(); } catch (_) {}
     }
   }, [releaseWakeLock, revokeAllFileUrls]);
+
+  const cancelTransfer = useCallback(() => {
+    const engine = engineRef.current;
+    const state = engine?.transferState;
+    if (engine && (state === 'transferring' || state === 'connected')) {
+      try { engine.cancelTransfer(); } catch (_) {}
+      setIsPaused(false);
+      return;
+    }
+    resetSession();
+  }, [resetSession]);
+
+  const pauseTransfer = useCallback(() => {
+    if (engineRef.current) {
+      try { engineRef.current.pauseTransfer(); } catch (_) {}
+    }
+  }, []);
+
+  const resumeTransfer = useCallback(() => {
+    if (engineRef.current) {
+      try { engineRef.current.resumeTransfer(); } catch (_) {}
+    }
+  }, []);
 
   return {
     engineState,
@@ -334,9 +367,14 @@ export function useFluxTransfer() {
     receivedFileUrl,
     receivedFileName,
     errorMessage,
+    connectionStatus,
+    isPaused,
     createSendSession,
     joinReceiveSession,
-    cancelTransfer
+    cancelTransfer,
+    resetSession,
+    pauseTransfer,
+    resumeTransfer
   };
 }
 

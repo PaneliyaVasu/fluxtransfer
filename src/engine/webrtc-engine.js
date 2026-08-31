@@ -25,20 +25,27 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   'use strict';
 
   const FRAME_OVERHEAD = 32; // 4B index + 12B IV + 16B GCM tag
-  const DEFAULT_CHUNK_SIZE = 64 * 1024; // Safe under conservative 64 KB SCTP limits
+  const RAW_FRAME_OVERHEAD = 4; // plaintext frames: [index 4B][payload]
+  const DEFAULT_CHUNK_SIZE = 64 * 1024;
   const MAX_CHUNK_SIZE = 256 * 1024;
-  const BUFFER_HIGH_WATERMARK = 4 * 1024 * 1024; // 4 MB — keeps the pipe full on LAN without blowing mobile RAM
-  const BUFFER_LOW_WATERMARK = 1 * 1024 * 1024;  // 1 MB
+  const BUFFER_HIGH_WATERMARK = 16 * 1024 * 1024;
+  const BUFFER_LOW_WATERMARK = 4 * 1024 * 1024;
+  const BUFFER_HIGH_WATERMARK_MOBILE = 8 * 1024 * 1024;
+  const BUFFER_LOW_WATERMARK_MOBILE = 2 * 1024 * 1024;
   const PBKDF2_ITERATIONS = 10000;
   const METADATA_ACK_TIMEOUT_MS = 15000;
-  const MAX_EARLY_CHUNK_QUEUE_SIZE = 100;
-  const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024; // Prefer disk-backed receive above this; not a hard reject
+  const MAX_EARLY_CHUNK_QUEUE_SIZE = 400;
+  const MAX_MEMORY_FALLBACK_SIZE = 300 * 1024 * 1024;
+  const MOBILE_DISK_STORAGE_SIZE = 24 * 1024 * 1024;
   const ICE_RECONNECT_TIMEOUT_MS = 5000;
   const MAX_ICE_RESTART_ATTEMPTS = 2;
   const STALL_TIMEOUT_MS = 30000;
-  const PIPELINE_DEPTH = 3;
-  const WORKER_PIPELINE_DEPTH = 6;
-  const CRYPTO_WORKER_COUNT = 2;
+  const PIPELINE_DEPTH = 16;
+  const WORKER_PIPELINE_DEPTH = 24;
+  const CRYPTO_WORKER_COUNT = 4;
+  const CRYPTO_WORKER_COUNT_MOBILE = 3;
+  const PROGRESS_UI_MS = 250;
+  const PROGRESS_ACK_MS = 250;
   const MAX_BATCH_FILES = 100;
 
   function getManifestApi() {
@@ -121,19 +128,29 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     const add = (url) => {
       if (url && !urls.includes(url)) urls.push(url);
     };
-    if (isPrivateIPv4(hostname)) {
-      add(`ws://${host}/ws`);
+    if (isPrivateIPv4(hostname) || hostname === 'localhost' || hostname === '127.0.0.1') {
       add(`ws://${hostname}:8080`);
       add(`ws://${hostname}:8080/ws`);
-    } else if (hostname === 'localhost' || hostname === '127.0.0.1') {
       add(`ws://${host}/ws`);
-      add('ws://127.0.0.1:8080');
-      add('ws://localhost:8080');
     } else {
       add(`ws://${host}/ws`);
       add(`ws://${hostname}:8080`);
     }
     return urls;
+  }
+
+  function getLanIceServers() {
+    return [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' }
+    ];
+  }
+
+  function getDefaultIceServers() {
+    if (typeof window !== 'undefined' && window.location && isPrivateIPv4(window.location.hostname)) {
+      return getLanIceServers();
+    }
+    return DEFAULT_ICE_SERVERS;
   }
 
   function rewriteHostCandidate(candidateStr, lanIps) {
@@ -225,20 +242,27 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   }
 
   function toOwnedBytes(data) {
-    if (data instanceof Uint8Array) return data.slice();
-    if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
     if (ArrayBuffer.isView(data)) {
-      return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     }
     return new Uint8Array(data || 0);
   }
 
-  function frameToArrayBuffer(frame) {
+  function asSendableBuffer(frame) {
     if (frame instanceof ArrayBuffer) return frame;
-    if (frame instanceof Uint8Array || ArrayBuffer.isView(frame)) {
+    if (ArrayBuffer.isView(frame)) {
+      if (frame.byteOffset === 0 && frame.byteLength === frame.buffer.byteLength) {
+        return frame.buffer;
+      }
       return frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength);
     }
     return frame;
+  }
+
+  function canUseNativeAes() {
+    return hasSubtleApi(getNativeCrypto());
   }
 
   const MIME_BY_EXT = {
@@ -274,6 +298,13 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   function isSecureBrowserContext() {
     if (typeof window === 'undefined' || typeof window.isSecureContext !== 'boolean') return true;
     return window.isSecureContext === true;
+  }
+
+  function isMobileBrowser() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    if (/iPhone|iPad|iPod|Android/i.test(ua)) return true;
+    return navigator.platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1;
   }
 
   const IDB_RECEIVE_DB = 'flux_receive_parts';
@@ -364,7 +395,15 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       return createNamedFile([toOwnedBytes(source)], name, mime);
     }
     if (typeof Blob !== 'undefined' && source instanceof Blob) {
-      return createNamedFile([source], name, mime);
+      // Never wrap/copy an existing Blob — that duplicates 500MB+ files in RAM
+      // and crashes iOS when the download later opens a blob: URL.
+      if (source instanceof File && source.name === name) return source;
+      try {
+        Object.defineProperty(source, 'name', { value: name, configurable: true });
+      } catch (_) {
+        try { source.name = name; } catch (__) {}
+      }
+      return source;
     }
     if (Array.isArray(source)) {
       return createNamedFile(source, name, mime);
@@ -412,10 +451,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.signalingUrl = config.signalingUrl || defaultSignalingUrl;
       this._signalingUrls = config.signalingUrl ? [config.signalingUrl] : getSignalingUrls();
       this._signalingUrlIndex = 0;
+      this._joinAckTimer = null;
       this._lanHints = new Set(getPageLanHints());
       this._localHostCandidates = [];
       this._connectWatchTimer = null;
-      this.iceServers = config.iceServers || DEFAULT_ICE_SERVERS;
+      this.iceServers = config.iceServers || getDefaultIceServers();
 
       // Event Callbacks
       this.onStatusChange = config.onStatusChange || (() => { });
@@ -470,10 +510,19 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
       // Receive serialization + OPFS backpressure
       this._receiveChain = Promise.resolve();
+      this._controlChain = Promise.resolve();
+      this._recvCommitChain = Promise.resolve();
+      this._recvIncoming = [];
+      this._recvIncomingBusy = false;
+      this._recvDecryptInflight = 0;
+      this._recvDecryptWaiters = [];
       this._opfsWritePending = 0;
       this._opfsDrainedResolvers = [];
       this._opfsFinalizeResolve = null;
       this._opfsFinalizeReject = null;
+      this._lastProgressAck = 0;
+      this._remoteProgressActive = false;
+      this._speedSamples = [];
 
       // Connection recovery
       this._iceRestartAttempts = 0;
@@ -482,6 +531,12 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this._isIceRestarting = false;
       this._stallTimer = null;
       this._negotiatedChunkSize = DEFAULT_CHUNK_SIZE;
+      this._paused = false;
+      this._pauseResolvers = [];
+      this._e2ee = true;
+      this._hashNext = 0;
+      this._hashWaiters = new Map();
+      this._stallArmedAt = 0;
 
       // Speed & UI state
       this.transferStartTime = 0;
@@ -503,6 +558,12 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         console.log(`[WebRTC Engine] Suppressing state transition to ${state} because transfer is already completed.`);
         return;
       }
+      if (!force && this.transferState === 'cancelled' && (state === 'failed' || state === 'connecting' || state === 'connected' || state === 'transferring')) {
+        return;
+      }
+      if (!force && this.transferState === 'transferring' && (state === 'connected' || state === 'connecting')) {
+        return;
+      }
       this.transferState = state;
       console.log(`[WebRTC Engine] State transition -> ${state}`);
       if (typeof this._onStateChangeCb === 'function') {
@@ -510,7 +571,16 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
     }
 
+    _transferAlreadyDone() {
+      return this.transferState === 'completed' || this.transferState === 'cancelled';
+    }
+
+    _dataChannelIsOpen() {
+      return Boolean(this.dataChannel && this.dataChannel.readyState === 'open');
+    }
+
     onError(err, code) {
+      if (this._transferAlreadyDone()) return;
       console.error('[WebRTC Engine] Error:', err, code);
       this._setState('failed');
       if (typeof this._onErrorCb === 'function') {
@@ -560,6 +630,9 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           break;
         case 'dataChannelOpen':
           this.onDataChannelOpen = fn;
+          break;
+        case 'pauseChange':
+          this.onPauseChange = fn;
           break;
       }
       return this;
@@ -771,7 +844,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
 
       const workers = [];
-      for (let i = 0; i < CRYPTO_WORKER_COUNT; i++) {
+      const workerCount = isMobileBrowser() ? CRYPTO_WORKER_COUNT_MOBILE : CRYPTO_WORKER_COUNT;
+      for (let i = 0; i < workerCount; i++) {
         const worker = this._spawnCryptoWorker();
         if (!worker) break;
         this._bindCryptoWorker(worker);
@@ -792,7 +866,85 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     }
 
     _getPipelineDepth() {
-      return this._cryptoWorkers.length ? WORKER_PIPELINE_DEPTH : PIPELINE_DEPTH;
+      if (this._e2ee === false) {
+        return isMobileBrowser() ? 12 : 20;
+      }
+      if (this._cryptoWorkers.length) {
+        return isMobileBrowser() ? 12 : WORKER_PIPELINE_DEPTH;
+      }
+      return isMobileBrowser() ? 8 : PIPELINE_DEPTH;
+    }
+
+    _recvDecryptDepth() {
+      if (this._e2ee === false) return isMobileBrowser() ? 16 : 32;
+      return isMobileBrowser() ? 12 : 24;
+    }
+
+    _noteProgressBytes(currentBytes) {
+      const now = Date.now();
+      if (!this.lastProgressTime) {
+        this.lastProgressTime = now;
+        this.lastProgressBytes = currentBytes;
+        this.currentSpeedBps = 0;
+        this._speedSamples = [];
+        return;
+      }
+      const dt = (now - this.lastProgressTime) / 1000;
+      if (dt >= 0.28) {
+        const inst = dt > 0 ? Math.max(0, (currentBytes - this.lastProgressBytes) / dt) : 0;
+        if (!this._speedSamples) this._speedSamples = [];
+        this._speedSamples.push(inst);
+        if (this._speedSamples.length > 6) this._speedSamples.shift();
+        this.currentSpeedBps = this._speedSamples.reduce((sum, value) => sum + value, 0) / this._speedSamples.length;
+        this.lastProgressTime = now;
+        this.lastProgressBytes = currentBytes;
+      }
+    }
+
+    _maybeSendProgressAck(force = false) {
+      const now = Date.now();
+      if (!force && now - (this._lastProgressAck || 0) < PROGRESS_ACK_MS) return;
+      this._lastProgressAck = now;
+      const total = (this.incomingMeta && this.incomingMeta.size) || 0;
+      this._sendControlMessage({
+        type: 'bytes-ack',
+        receivedBytes: this.receivedBytes,
+        speedBps: this.currentSpeedBps,
+        percent: total > 0 ? Math.min(100, (this.receivedBytes / total) * 100) : 0
+      });
+    }
+
+    _applyRemoteProgress(msg) {
+      const file = this.currentFile;
+      const total = (file && file.size) || 0;
+      const receivedBytes = Math.max(0, Number(msg.receivedBytes) || 0);
+      this._remoteProgressActive = true;
+      if (typeof msg.speedBps === 'number' && Number.isFinite(msg.speedBps)) {
+        this.currentSpeedBps = Math.max(0, msg.speedBps);
+      } else {
+        this._noteProgressBytes(receivedBytes);
+      }
+      const percent = typeof msg.percent === 'number'
+        ? msg.percent
+        : (total > 0 ? Math.min(100, (receivedBytes / total) * 100) : 0);
+      this.onProgress({
+        percent,
+        transferredBytes: Math.min(receivedBytes, total || receivedBytes),
+        totalBytes: total,
+        currentFileBytes: receivedBytes,
+        currentFileTotal: total,
+        fileName: (file && file.name) || '',
+        speedBps: this.currentSpeedBps,
+        role: 'sender'
+      });
+    }
+
+    _bufferHigh() {
+      return isMobileBrowser() ? BUFFER_HIGH_WATERMARK_MOBILE : BUFFER_HIGH_WATERMARK;
+    }
+
+    _bufferLow() {
+      return isMobileBrowser() ? BUFFER_LOW_WATERMARK_MOBILE : BUFFER_LOW_WATERMARK;
     }
 
     /**
@@ -837,15 +989,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
      */
     async encryptChunk(chunkBuffer, chunkIndex, key) {
       if (this._cryptoWorkers.length) {
-        try {
-          const owned = chunkBuffer instanceof ArrayBuffer
-            ? chunkBuffer.slice(0)
-            : chunkBuffer.buffer.slice(chunkBuffer.byteOffset, chunkBuffer.byteOffset + chunkBuffer.byteLength);
-          const result = await this._callCryptoWorker('encrypt', { buffer: owned, chunkIndex }, [owned]);
-          return new Uint8Array(result.buffer);
-        } catch (_) {
-          // Fall through to main-thread encrypt
-        }
+        const owned = chunkBuffer instanceof ArrayBuffer
+          ? chunkBuffer
+          : chunkBuffer.buffer.slice(chunkBuffer.byteOffset, chunkBuffer.byteOffset + chunkBuffer.byteLength);
+        const result = await this._callCryptoWorker('encrypt', { buffer: owned, chunkIndex }, [owned]);
+        return result.buffer;
       }
 
       const cryptoObj = getCrypto();
@@ -878,13 +1026,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         : frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength);
 
       if (this._cryptoWorkers.length) {
-        try {
-          const owned = buffer.slice(0);
-          const result = await this._callCryptoWorker('decrypt', { buffer: owned }, [owned]);
-          return { chunkIndex: result.chunkIndex, chunkData: result.buffer };
-        } catch (_) {
-          // Fall through to main-thread decrypt
-        }
+        const result = await this._callCryptoWorker('decrypt', { buffer }, [buffer]);
+        return { chunkIndex: result.chunkIndex, chunkData: result.buffer };
       }
 
       if (buffer.byteLength < 32) {
@@ -1035,6 +1178,13 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         clearTimeout(connectTimeout);
         this.onStatusChange('Connected to signaling server. Joining room…', 'info');
         this._sendSignaling({ type: 'join-room', room: this.roomCode });
+        this._clearJoinAckTimer();
+        this._joinAckTimer = setTimeout(() => {
+          if (this.ws !== socket || this.role) return;
+          console.warn('[WebRTC Engine] No join-ack from signaling — retrying another path');
+          this.onStatusChange('Signaling path stalled. Retrying…', 'warning');
+          this._tryNextSignalingUrl();
+        }, 2500);
       };
 
       socket.onmessage = (event) => {
@@ -1066,6 +1216,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     }
 
     _tryNextSignalingUrl() {
+      this._clearJoinAckTimer();
       if (this.role) return false;
       if (this._signalingUrlIndex >= this._signalingUrls.length - 1) return false;
       this._signalingUrlIndex += 1;
@@ -1082,10 +1233,15 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     _handleSignalingMessage(msg) {
       switch (msg.type) {
         case 'joined':
+          this._clearJoinAckTimer();
           this.role = msg.role;
           this._addLanHints(msg.lanHints);
           this._shareLanHints();
-          this.onStatusChange(`Room joined. Waiting for peer…`, 'info');
+          console.log(`[WebRTC Engine] Joined room as ${this.role}`, msg.peerPresent ? '(peer already present)' : '(waiting for peer)');
+          this.onStatusChange(
+            msg.peerPresent ? 'Peer found. Connecting devices…' : 'Code accepted. Waiting for the other device…',
+            'info'
+          );
           if (msg.peerPresent && this.role === 'initiator') {
             this.onPeerJoined();
             this._armConnectWatch();
@@ -1142,7 +1298,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     _createPeerConnection() {
       const pcConfig = {
         iceServers: this.iceServers,
-        iceCandidatePoolSize: 0,
+        iceCandidatePoolSize: 8,
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
         iceTransportPolicy: 'all'
@@ -1170,9 +1326,12 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           this._iceRestartAttempts = 0;
           this._isIceRestarting = false;
           this._clearConnectWatch();
-          this._setState('connected');
-          this._reportConnectionType();
+          if (this.transferState === 'idle' || this.transferState === 'connecting') {
+            this._setState('connected');
+            this._reportConnectionType();
+          }
         } else if (state === 'failed') {
+          if (this._transferAlreadyDone() || this._dataChannelIsOpen()) return;
           if (this._iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
             this._attemptIceRestart();
             return;
@@ -1185,6 +1344,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
             this.disconnect();
           }
         } else if (state === 'disconnected') {
+          if (this._transferAlreadyDone() || this._dataChannelIsOpen()) return;
           this.onStatusChange('P2P connection interrupted — attempting recovery…', 'warning');
           this._scheduleIceRecovery();
         }
@@ -1198,8 +1358,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
             this._clearIceReconnectTimer();
             this._isIceRestarting = false;
             this._clearConnectWatch();
-            this._setState('connected');
+            if (this.transferState === 'idle' || this.transferState === 'connecting') {
+              this._setState('connected');
+            }
           } else if (state === 'failed') {
+            if (this._transferAlreadyDone() || this._dataChannelIsOpen()) return;
             if (this._iceRestartAttempts < MAX_ICE_RESTART_ATTEMPTS) {
               this._attemptIceRestart();
               return;
@@ -1261,9 +1424,14 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this._createPeerConnection();
       // Reliable + ordered: SCTP retransmits lost packets so the transfer cannot
       // hang on a missing chunk. Unreliable unordered dropped frames silently.
-      this.dataChannel = this.pc.createDataChannel('flux-file-channel', {
-        ordered: true
-      });
+      try {
+        this.dataChannel = this.pc.createDataChannel('flux-file-channel', {
+          ordered: true,
+          priority: 'high'
+        });
+      } catch (_) {
+        this.dataChannel = this.pc.createDataChannel('flux-file-channel', { ordered: true });
+      }
       this._setupDataChannelEvents();
 
       try {
@@ -1416,6 +1584,13 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
     }
 
+    _clearJoinAckTimer() {
+      if (this._joinAckTimer) {
+        clearTimeout(this._joinAckTimer);
+        this._joinAckTimer = null;
+      }
+    }
+
     _flushPendingIceCandidates() {
       while (this.pendingIceCandidates.length > 0) {
         const candidate = this.pendingIceCandidates.shift();
@@ -1427,7 +1602,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       if (!this.dataChannel) return;
 
       this.dataChannel.binaryType = 'arraybuffer';
-      this.dataChannel.bufferedAmountLowThreshold = BUFFER_LOW_WATERMARK;
+      this.dataChannel.bufferedAmountLowThreshold = this._bufferLow();
 
       this.dataChannel.onopen = () => {
         console.log('[WebRTC Engine] DataChannel OPEN');
@@ -1450,13 +1625,18 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       };
 
       this.dataChannel.onmessage = (event) => {
-        this._receiveChain = this._receiveChain
-          .then(() => this._handleDataChannelMessage(event.data))
-          .catch((err) => {
-            if (this.transferState !== 'completed' && this.transferState !== 'failed') {
-              this._handleTransferFailure(err.message || 'Receive pipeline error', 'ERR_RECEIVE');
-            }
-          });
+        const data = event.data;
+        if (typeof data === 'string') {
+          this._controlChain = (this._controlChain || Promise.resolve())
+            .then(() => this._handleDataChannelMessage(data))
+            .catch((err) => {
+              if (this.transferState !== 'completed' && this.transferState !== 'failed' && this.transferState !== 'cancelled') {
+                this._handleTransferFailure(err.message || 'Receive pipeline error', 'ERR_RECEIVE');
+              }
+            });
+          return;
+        }
+        this._enqueueReceiveFrame(data);
       };
     }
 
@@ -1501,12 +1681,23 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
                 'success'
               );
             }
+          } else if (msg.type === 'bytes-ack') {
+            this._applyRemoteProgress(msg);
           } else if (msg.type === 'cancel') {
-            this._cleanupReceiverStorage(true);
             this.isTransferring = false;
+            this._setPaused(false, false);
+            this._cleanupReceiverStorage(true);
+            this._clearStallTimer();
             this._setState('cancelled');
+            this._rejectMetadataAck(new Error('Transfer cancelled'));
             this.onStatusChange('Transfer cancelled by peer.', 'warning');
-            this.onError('Peer cancelled the file transfer.', 'ERR_TRANSFER_CANCELLED');
+          } else if (msg.type === 'pause') {
+            this._setPaused(true, false);
+            this.onStatusChange('Transfer paused by peer.', 'warning');
+          } else if (msg.type === 'resume') {
+            this._setPaused(false, false);
+            this._armStallTimer();
+            this.onStatusChange('Transfer resumed.', 'info');
           } else if (msg.type === 'resume-request') {
             await this._handleResumeRequest(msg);
           } else if (msg.type === 'zen_game') {
@@ -1516,21 +1707,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           console.error('[WebRTC Engine] Failed parsing text frame');
         }
       } else if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
-        const buffer = data instanceof ArrayBuffer
-          ? data
-          : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-
-        if (!this._receiverReady || !this.incomingMeta || !this.aesKey) {
-          if (!this._earlyChunkQueue) this._earlyChunkQueue = [];
-          if (this._earlyChunkQueue.length >= MAX_EARLY_CHUNK_QUEUE_SIZE) {
-            this._handleTransferFailure('Too many chunks arrived before receiver was ready', 'ERR_EARLY_QUEUE_FULL');
-            return;
-          }
-          this._earlyChunkQueue.push(buffer);
-          return;
-        }
-
-        await this._processBinaryChunkFrame(buffer);
+        this._enqueueReceiveFrame(data);
       }
     }
 
@@ -1546,16 +1723,20 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.senderFinalHash = msg.hash || this.senderFinalHash || null;
       this.receivedChunkSet = new Set();
       this.receiverHasher = new (this._getStreamingSHA256Class())();
+      this._e2ee = msg.cipher !== 'none';
+      this.aesKey = null;
       this._setState('transferring');
       this._armStallTimer();
 
-      try {
-        this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
-        await this._initCryptoWorkers(this.sessionCode, this.salt);
-      } catch (keyErr) {
-        this._sendControlMessage({ type: 'metadata-error', error: keyErr.message });
-        this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
-        return;
+      if (this._e2ee) {
+        try {
+          this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+          await this._initCryptoWorkers(this.sessionCode, this.salt);
+        } catch (keyErr) {
+          this._sendControlMessage({ type: 'metadata-error', error: keyErr.message });
+          this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+          return;
+        }
       }
 
       try {
@@ -1566,6 +1747,16 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         return;
       }
 
+      this._recvIncoming = [];
+      this._recvDecryptInflight = 0;
+      this._recvDecryptWaiters = [];
+      this._recvCommitChain = Promise.resolve();
+      this.lastProgressTime = 0;
+      this.lastProgressBytes = 0;
+      this.currentSpeedBps = 0;
+      this._speedSamples = [];
+      this._lastProgressAck = 0;
+
       this._receiverReady = true;
       this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
       this.onFileMetadata(msg);
@@ -1574,7 +1765,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       const queued = this._earlyChunkQueue || [];
       this._earlyChunkQueue = null;
       for (const frame of queued) {
-        await this._processBinaryChunkFrame(frame);
+        this._enqueueReceiveFrame(frame);
       }
     }
 
@@ -1628,6 +1819,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         pending: [],
         pendingBytes: 0,
         nextKey: 0,
+        flushing: Promise.resolve(),
         mime: msg.mimeType || 'application/octet-stream'
       };
 
@@ -1661,10 +1853,13 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           state.pending.push(chunkData);
           state.pendingBytes += chunkData.byteLength || 0;
           if (state.pendingBytes >= IDB_FLUSH_BYTES) {
-            await flush();
+            const prev = state.flushing;
+            state.flushing = flush();
+            await prev;
           }
         },
         async finalize() {
+          await state.flushing;
           await flush();
           const blobs = [];
           for (let key = 0; key < state.nextKey; key++) {
@@ -1690,7 +1885,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.memoryChunks = null;
 
       const fileSize = Number(msg.size) || 0;
-      const largeFile = fileSize > MAX_MEMORY_FALLBACK_SIZE;
+      const diskThreshold = isMobileBrowser() ? MOBILE_DISK_STORAGE_SIZE : MAX_MEMORY_FALLBACK_SIZE;
+      const largeFile = fileSize > diskThreshold;
       const canTryOpfs = typeof navigator !== 'undefined'
         && navigator.storage
         && typeof navigator.storage.getDirectory === 'function'
@@ -1766,7 +1962,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         const payload = e.data || {};
         if (payload.type === 'write-ack') {
           this._opfsWritePending = Math.max(0, this._opfsWritePending - 1);
-          if (this._opfsWritePending === 0) {
+          if (this._opfsWritePending <= 8) {
             const waiters = this._opfsDrainedResolvers.splice(0);
             waiters.forEach((resolve) => resolve());
           }
@@ -1782,27 +1978,100 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       };
     }
 
-    _waitForOpfsWrites() {
-      if (!this._opfsWritePending) return Promise.resolve();
+    _waitForOpfsWrites(maxPending = 0) {
+      if (!this._opfsWritePending || this._opfsWritePending <= maxPending) return Promise.resolve();
       return new Promise((resolve) => {
         this._opfsDrainedResolvers.push(resolve);
       });
     }
 
-    async _processBinaryChunkFrame(frameBuffer) {
-      if (!this.incomingMeta || !this.aesKey) {
+    _enqueueReceiveFrame(data) {
+      if (this.transferState === 'cancelled' || this.transferState === 'failed') return;
+      if (!this._receiverReady || !this.incomingMeta || (this._e2ee && !this.aesKey)) {
         if (!this._earlyChunkQueue) this._earlyChunkQueue = [];
-        this._earlyChunkQueue.push(frameBuffer);
+        if (this._earlyChunkQueue.length >= MAX_EARLY_CHUNK_QUEUE_SIZE) {
+          this._handleTransferFailure('Too many chunks arrived before receiver was ready', 'ERR_EARLY_QUEUE_FULL');
+          return;
+        }
+        this._earlyChunkQueue.push(data);
         return;
       }
+      if (!this._recvIncoming) this._recvIncoming = [];
+      this._recvIncoming.push(data);
+      this._drainReceiveIncoming();
+    }
 
-      let decryptedObj;
+    async _drainReceiveIncoming() {
+      if (this._recvIncomingBusy) return;
+      this._recvIncomingBusy = true;
       try {
-        decryptedObj = await this.decryptFrame(frameBuffer, this.aesKey);
-      } catch (decryptErr) {
-        this._handleTransferFailure(`Decryption failed — authentication or key mismatch: ${decryptErr.message}`, 'ERR_DECRYPT_FAILED');
-        return;
+        while (this._recvIncoming && this._recvIncoming.length) {
+          while (this._recvDecryptInflight >= this._recvDecryptDepth()) {
+            await new Promise((resolve) => {
+              if (!this._recvDecryptWaiters) this._recvDecryptWaiters = [];
+              this._recvDecryptWaiters.push(resolve);
+            });
+          }
+          if (!this._recvIncoming.length) break;
+          this._startReceiveDecrypt(this._recvIncoming.shift());
+        }
+      } finally {
+        this._recvIncomingBusy = false;
       }
+    }
+
+    _decodeChunkFrame(frameBuffer) {
+      const buffer = frameBuffer instanceof ArrayBuffer
+        ? frameBuffer
+        : (ArrayBuffer.isView(frameBuffer)
+          ? frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength)
+          : frameBuffer);
+      if (this._e2ee === false) {
+        if (!buffer || buffer.byteLength < RAW_FRAME_OVERHEAD) {
+          return Promise.reject(new Error('Invalid transfer frame: undersized payload'));
+        }
+        const chunkIndex = new DataView(buffer).getUint32(0, false);
+        return Promise.resolve({
+          chunkIndex,
+          chunkData: new Uint8Array(buffer, RAW_FRAME_OVERHEAD)
+        });
+      }
+      return this.decryptFrame(buffer, this.aesKey);
+    }
+
+    _startReceiveDecrypt(data) {
+      this._recvDecryptInflight += 1;
+      const buffer = data instanceof ArrayBuffer
+        ? data
+        : (ArrayBuffer.isView(data)
+          ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+          : data);
+
+      const decryptPromise = this._decodeChunkFrame(buffer)
+        .finally(() => {
+          this._recvDecryptInflight = Math.max(0, this._recvDecryptInflight - 1);
+          const waiter = this._recvDecryptWaiters && this._recvDecryptWaiters.shift();
+          if (waiter) waiter();
+        });
+
+      this._recvCommitChain = (this._recvCommitChain || Promise.resolve())
+        .then(async () => {
+          const decryptedObj = await decryptPromise;
+          if (this.transferState === 'cancelled' || !this.isTransferring) return;
+          await this._commitDecryptedChunk(decryptedObj);
+        })
+        .catch((err) => {
+          if (this.transferState === 'completed' || this.transferState === 'failed' || this.transferState === 'cancelled') return;
+          this._handleTransferFailure(
+            err?.message || 'Decryption failed — authentication or key mismatch',
+            'ERR_DECRYPT_FAILED'
+          );
+        });
+    }
+
+    async _commitDecryptedChunk(decryptedObj) {
+      if (this.transferState === 'cancelled' || !this.isTransferring) return;
+      if (!this.incomingMeta || !decryptedObj) return;
 
       const { chunkIndex } = decryptedObj;
       const chunkBytes = toOwnedBytes(decryptedObj.chunkData);
@@ -1830,6 +2099,9 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
 
       if (this.opfsActive && this.opfsWorker) {
+        if (this._opfsWritePending > 16) {
+          await this._waitForOpfsWrites(8);
+        }
         const offset = chunkIndex * meta.chunkSize;
         this._opfsWritePending += 1;
         const writeCopy = chunkBytes.slice();
@@ -1847,25 +2119,18 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.receivedChunksCount += 1;
       this.receivedBytes += chunkBytes.byteLength;
       this._armStallTimer();
+      this._noteProgressBytes(this.receivedBytes);
 
-      const totalBytes = meta.size;
       const now = Date.now();
-      const timeDiff = (now - this.lastProgressTime) / 1000;
-
-      if (timeDiff >= 0.5 || this.lastProgressTime === 0) {
-        const bytesDiff = this.receivedBytes - this.lastProgressBytes;
-        this.currentSpeedBps = timeDiff > 0 ? (bytesDiff / timeDiff) : 0;
-        this.lastProgressTime = now;
-        this.lastProgressBytes = this.receivedBytes;
-      }
-
-      if ((now - (this._lastRecvUiUpdate || 0)) > 100 || this.receivedChunksCount >= meta.totalChunks) {
+      const isLast = this.receivedChunksCount >= meta.totalChunks;
+      if ((now - (this._lastRecvUiUpdate || 0)) > PROGRESS_UI_MS || isLast) {
         this._lastRecvUiUpdate = now;
         this._emitTransferProgress({
           currentBytes: this.receivedBytes,
-          currentTotal: totalBytes,
+          currentTotal: meta.size,
           role: 'receiver'
         });
+        this._maybeSendProgressAck(isLast);
       }
 
       await this._maybeFinalizeReceiver();
@@ -2047,10 +2312,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       if (this.dataChannel && this.dataChannel.maxMessageSize) {
         maxMsg = Math.min(maxMsg, this.dataChannel.maxMessageSize) || maxMsg;
       }
-      if (!Number.isFinite(maxMsg) || maxMsg <= FRAME_OVERHEAD) {
+      const overhead = this._e2ee === false ? RAW_FRAME_OVERHEAD : FRAME_OVERHEAD;
+      if (!Number.isFinite(maxMsg) || maxMsg <= overhead) {
         return DEFAULT_CHUNK_SIZE;
       }
-      const usable = Math.max(16 * 1024, maxMsg - FRAME_OVERHEAD);
+      const usable = Math.max(16 * 1024, maxMsg - overhead);
       return Math.min(MAX_CHUNK_SIZE, usable);
     }
 
@@ -2112,8 +2378,15 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     }
 
     _armStallTimer() {
+      const now = Date.now();
+      if (this._stallTimer && this._stallArmedAt && now - this._stallArmedAt < 400) return;
       this._clearStallTimer();
+      this._stallArmedAt = now;
       this._stallTimer = setTimeout(() => {
+        if (this._paused) {
+          this._armStallTimer();
+          return;
+        }
         if (this.isTransferring && this.transferState === 'transferring') {
           this._handleTransferFailure('Transfer stalled — no data received for 30 seconds.', 'ERR_TRANSFER_STALL');
         }
@@ -2202,6 +2475,10 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         return this.sendFiles(file);
       }
 
+      if (this.transferState === 'cancelled' || this.transferState === 'failed') {
+        return;
+      }
+
       if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
         this.onError('P2P DataChannel is not open. Connect to peer first.', 'ERR_NOT_CONNECTED');
         return;
@@ -2220,6 +2497,14 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this.currentFile = file;
       this.isTransferring = true;
       this._metadataAckReceived = false;
+      this._remoteProgressActive = false;
+      this.lastProgressTime = 0;
+      this.lastProgressBytes = 0;
+      this.currentSpeedBps = 0;
+      this._speedSamples = [];
+      this._hashNext = 0;
+      this._hashWaiters = new Map();
+      this._e2ee = canUseNativeAes();
       this._setState('transferring');
       this._armStallTimer();
 
@@ -2229,25 +2514,25 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
       const cryptoObj = getCrypto();
       this.salt = cryptoObj.getRandomValues(new Uint8Array(16));
+      this.aesKey = null;
 
-      try {
-        this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
-        await this._initCryptoWorkers(this.sessionCode, this.salt);
-      } catch (keyErr) {
-        this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
-        return;
+      if (this._e2ee) {
+        try {
+          this.aesKey = await this.deriveKey(this.sessionCode, this.salt);
+          await this._initCryptoWorkers(this.sessionCode, this.salt);
+        } catch (keyErr) {
+          this._handleTransferFailure(`Failed to derive encryption key: ${keyErr.message}`, 'ERR_KEY_DERIVATION');
+          return;
+        }
       }
 
-      // Hash in parallel with the send — never block the first byte on a full-file digest
-      const hashPromise = this._computeHash(file).catch((hashErr) => {
-        throw new Error(`SHA-256 calculation failed: ${hashErr.message}`);
-      });
+      this.senderHasher = new (this._getStreamingSHA256Class())();
 
       const packed = file.fluxPacked || null;
       const metadata = {
         type: 'metadata',
         v: 3,
-        cipher: 'AES-256-GCM',
+        cipher: this._e2ee ? 'AES-256-GCM' : 'none',
         name: file.name,
         size: file.size,
         mimeType: file.type || 'application/octet-stream',
@@ -2255,10 +2540,15 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         totalChunks: totalChunks,
         salt: bytesToBase64(this.salt),
         packedFileCount: packed?.count || 1,
-        packedFiles: Array.isArray(packed?.files) ? packed.files.slice(0, MAX_BATCH_FILES) : undefined
+        packedFiles: Array.isArray(packed?.files) ? packed.files.slice(0, 40) : undefined
       };
 
-      this.onStatusChange(`Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`, 'info');
+      this.onStatusChange(
+        this._e2ee
+          ? `Starting encrypted transfer of "${file.name}" (${this._formatBytes(file.size)})…`
+          : `Starting high-speed transfer of "${file.name}" (${this._formatBytes(file.size)})…`,
+        'info'
+      );
       this._sendControlMessage(metadata);
 
       try {
@@ -2267,6 +2557,9 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         this._handleTransferFailure(`Receiver did not become ready: ${ackErr.message}`, 'ERR_METADATA_ACK_TIMEOUT');
         return;
       }
+
+      await this._waitIfPaused();
+      if (!this.isTransferring) return;
 
       let offset = 0;
       let chunkIndex = 0;
@@ -2284,8 +2577,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         offset += rawChunkSize;
         chunkIndex += 1;
         inflight.push(
-          this._readAndEncryptChunk(file, thisOffset, rawChunkSize, thisIndex).then((frame) => ({
-            frame,
+          this._readAndEncryptChunk(file, thisOffset, rawChunkSize, thisIndex).then((result) => ({
+            frame: result.frame,
             rawChunkSize,
             index: thisIndex
           }))
@@ -2305,13 +2598,19 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
         enqueueEncrypt();
 
-        if (this.dataChannel.bufferedAmount > BUFFER_HIGH_WATERMARK) {
+        await this._waitIfPaused();
+        if (!this.isTransferring) break;
+
+        if (this.dataChannel.bufferedAmount > this._bufferHigh()) {
           try {
             await this._waitForBufferLow();
           } catch (_) {
-            if (this.transferState === 'completed' || !this.isTransferring) break;
+            if (this.transferState === 'completed' || this.transferState === 'cancelled' || !this.isTransferring) break;
           }
         }
+
+        await this._waitIfPaused();
+        if (!this.isTransferring) break;
 
         try {
           this.dataChannel.send(packet.frame);
@@ -2323,21 +2622,17 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         this._armStallTimer();
 
         const sentBytes = Math.min(file.size, packet.index * chunkSize + packet.rawChunkSize);
-        const now = Date.now();
-        const timeDiff = (now - this.lastProgressTime) / 1000;
-        if (timeDiff >= 0.5) {
-          this.currentSpeedBps = timeDiff > 0 ? ((sentBytes - this.lastProgressBytes) / timeDiff) : 0;
-          this.lastProgressTime = now;
-          this.lastProgressBytes = sentBytes;
-        }
-
-        if (sentBytes >= file.size || (now - this._lastSendUiUpdate) > 100) {
-          this._lastSendUiUpdate = now;
-          this._emitTransferProgress({
-            currentBytes: sentBytes,
-            currentTotal: file.size,
-            role: 'sender'
-          });
+        if (!this._remoteProgressActive) {
+          this._noteProgressBytes(sentBytes);
+          const now = Date.now();
+          if (sentBytes >= file.size || (now - (this._lastSendUiUpdate || 0)) > PROGRESS_UI_MS) {
+            this._lastSendUiUpdate = now;
+            this._emitTransferProgress({
+              currentBytes: sentBytes,
+              currentTotal: file.size,
+              role: 'sender'
+            });
+          }
         }
       }
 
@@ -2345,24 +2640,60 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
       let fileHash;
       try {
-        fileHash = await hashPromise;
+        if (this.senderHasher && this.senderHasher.totalBytes === file.size) {
+          fileHash = this.senderHasher.digestHex();
+        } else {
+          fileHash = await this._computeHash(file);
+        }
       } catch (hashErr) {
-        this._handleTransferFailure(hashErr.message, 'ERR_HASH_FAILED');
+        this._handleTransferFailure(hashErr.message || 'SHA-256 calculation failed', 'ERR_HASH_FAILED');
         return;
       }
+      this.senderHasher = null;
       this._sendControlMessage({ type: 'transfer-complete', hash: fileHash });
       this.onStatusChange('All chunks sent. Waiting for receiver verification…', 'info');
     }
 
+    _hashPlaintextInOrder(index, bytes) {
+      return new Promise((resolve) => {
+        const run = () => {
+          if (!this.isTransferring) {
+            resolve();
+            return;
+          }
+          if (index !== this._hashNext) return;
+          if (this.senderHasher) this.senderHasher.update(bytes);
+          this._hashNext += 1;
+          resolve();
+          const next = this._hashWaiters.get(this._hashNext);
+          if (next) {
+            this._hashWaiters.delete(this._hashNext);
+            next();
+          }
+        };
+        if (index === this._hashNext || !this.isTransferring) {
+          run();
+          return;
+        }
+        this._hashWaiters.set(index, run);
+      });
+    }
+
     /**
-     * Read one file slice and encrypt it. Used by the pipelined send loop so
-     * we can overlap crypto with the previous chunk's network send.
+     * Read one file slice, hash in send order, then encrypt (or pack a raw frame).
      */
     async _readAndEncryptChunk(file, offset, chunkSize, chunkIndex) {
       const slice = file.slice(offset, offset + chunkSize);
       const chunkBuffer = await slice.arrayBuffer();
+      await this._hashPlaintextInOrder(chunkIndex, new Uint8Array(chunkBuffer));
+      if (this._e2ee === false) {
+        const frame = new Uint8Array(RAW_FRAME_OVERHEAD + chunkBuffer.byteLength);
+        new DataView(frame.buffer).setUint32(0, chunkIndex, false);
+        frame.set(new Uint8Array(chunkBuffer), RAW_FRAME_OVERHEAD);
+        return { frame: frame.buffer };
+      }
       const encryptedFrame = await this.encryptChunk(chunkBuffer, chunkIndex, this.aesKey);
-      return frameToArrayBuffer(encryptedFrame);
+      return { frame: asSendableBuffer(encryptedFrame) };
     }
 
     /**
@@ -2370,7 +2701,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
      * Does not fake-unblock on a short timer — that caused send overflow and stalls.
      */
     _waitForBufferLow() {
-      if (!this.dataChannel || this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK || this.transferState === 'completed') {
+      if (!this.dataChannel || this.dataChannel.bufferedAmount <= this._bufferLow() || this.transferState === 'completed') {
         return Promise.resolve();
       }
       return new Promise((resolve, reject) => {
@@ -2398,10 +2729,10 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
             finish(reject, new Error('DataChannel closed during backpressure wait'));
             return;
           }
-          if (this.dataChannel.bufferedAmount <= BUFFER_LOW_WATERMARK || this.transferState === 'completed' || !this.isTransferring) {
+          if (this.dataChannel.bufferedAmount <= this._bufferLow() || this.transferState === 'completed' || this.transferState === 'cancelled' || !this.isTransferring) {
             finish(resolve);
           }
-        }, 40);
+        }, 80);
       });
     }
 
@@ -2416,14 +2747,58 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       });
     }
 
+    _setPaused(paused, notifyPeer = true) {
+      if (this._paused === paused) return;
+      this._paused = paused;
+      if (typeof this.onPauseChange === 'function') {
+        this.onPauseChange(paused);
+      }
+      if (notifyPeer) {
+        this._sendControlMessage({ type: paused ? 'pause' : 'resume' });
+      }
+      if (!paused) {
+        const waiters = this._pauseResolvers.splice(0);
+        waiters.forEach((resolve) => resolve());
+      } else {
+        this._clearStallTimer();
+      }
+    }
+
+    _waitIfPaused() {
+      if (!this._paused) return Promise.resolve();
+      return new Promise((resolve) => {
+        this._pauseResolvers.push(resolve);
+      });
+    }
+
+    pauseTransfer() {
+      if (this.transferState !== 'transferring' && this.transferState !== 'connected') return;
+      this._setPaused(true, true);
+      this.onStatusChange('Transfer paused', 'warning');
+    }
+
+    resumeTransfer() {
+      this._setPaused(false, true);
+      this._armStallTimer();
+      this.onStatusChange('Transfer resumed', 'info');
+    }
+
     cancelTransfer() {
+      if (this._transferAlreadyDone()) return;
+      this.isTransferring = false;
+      this._setPaused(false, false);
+      if (this._hashWaiters) {
+        const waiters = this._hashWaiters;
+        this._hashWaiters = new Map();
+        waiters.forEach((fn) => { try { fn(); } catch (_) {} });
+      }
       if (this.dataChannel && this.dataChannel.readyState === 'open') {
         this._sendControlMessage({ type: 'cancel' });
       }
       this._cleanupReceiverStorage(true);
-      this.isTransferring = false;
       this._clearStallTimer();
       this._setState('cancelled');
+      this._rejectMetadataAck(new Error('Transfer cancelled'));
       this.onStatusChange('Transfer cancelled', 'warning');
     }
 
@@ -2436,9 +2811,15 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     }
 
     _handleTransferFailure(errorMessage, errorCode) {
-      if (this.transferState === 'completed') return;
+      if (this._transferAlreadyDone && this._transferAlreadyDone()) return;
+      if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
       this.isTransferring = false;
       this._clearStallTimer();
+      if (this._hashWaiters) {
+        const waiters = this._hashWaiters;
+        this._hashWaiters = new Map();
+        waiters.forEach((fn) => { try { fn(); } catch (_) {} });
+      }
       this._rejectMetadataAck(new Error(errorMessage));
       this._setState('failed');
       this.onError(errorMessage, errorCode);
@@ -2446,7 +2827,11 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
     _sendControlMessage(obj) {
       if (this.dataChannel && this.dataChannel.readyState === 'open') {
-        this.dataChannel.send(JSON.stringify(obj));
+        try {
+          this.dataChannel.send(JSON.stringify(obj));
+        } catch (err) {
+          console.warn('[WebRTC Engine] Control message send failed', err);
+        }
       }
     }
 
@@ -2465,10 +2850,12 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     }
 
     disconnect() {
+      this._setPaused(false, false);
       this.isTransferring = false;
       this._clearStallTimer();
       this._clearIceReconnectTimer();
       this._clearConnectWatch();
+      this._clearJoinAckTimer();
       this._isIceRestarting = false;
       this._localHostCandidates = [];
       this._lanHints = new Set(getPageLanHints());

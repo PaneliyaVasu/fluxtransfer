@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Upload, Download, FileText, Check, X, CloudUpload, CloudDownload, Copy, Share2, Zap } from 'lucide-react';
+import { Upload, Download, FileText, Check, X, CloudUpload, CloudDownload, Copy, Share2, Zap, Pause, Play } from 'lucide-react';
 import { buildPairingUrl, extractPairingCode, readPairingCodeFromLocation, clearPairingCodeFromLocation, resolveShareableOrigin } from '../utils/pairing-url.js';
+import { isIosDevice, saveReceivedFile } from '../utils/save-received-file.js';
 import './TransferDashboard.css';
 
 async function walkDirectoryEntry(entry, out, prefix = '') {
@@ -53,7 +54,6 @@ export default function TransferDashboard({ transfer, addToast }) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isQrScannerOpen, setIsQrScannerOpen] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
   const [shareableOrigin, setShareableOrigin] = useState(
     typeof window !== 'undefined' ? window.location.origin : ''
   );
@@ -205,9 +205,15 @@ export default function TransferDashboard({ transfer, addToast }) {
     receivedFileBlob,
     receivedFileUrl,
     receivedFileName,
+    errorMessage = '',
+    connectionStatus = '',
+    isPaused = false,
     createSendSession,
     joinReceiveSession,
-    cancelTransfer
+    cancelTransfer,
+    resetSession,
+    pauseTransfer,
+    resumeTransfer
   } = transfer;
 
   const downloadReceivedItem = async (item) => {
@@ -231,13 +237,19 @@ export default function TransferDashboard({ transfer, addToast }) {
         if (err.name === 'AbortError') return;
       }
     }
-    if (!item.url) return;
-    const a = document.createElement('a');
-    a.href = item.url;
-    a.download = item.name || 'downloaded-file';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => document.body.removeChild(a), 100);
+
+    try {
+      const result = await saveReceivedFile(item.blob, item.url);
+      if (result === 'shared' && addToast) {
+        addToast('success', 'Saved', 'Use Save to Files in the share sheet to keep the file.');
+      }
+    } catch (err) {
+      if (err && err.message === 'IOS_SAVE_SHEET' && addToast) {
+        addToast('info', 'Save on iPhone', 'Tap Save to Files and choose Save to Files from the share sheet. The browser cannot open a 500 MB blob link on iOS.');
+      } else if (addToast) {
+        addToast('error', 'Save failed', err?.message || 'Could not save the received file.');
+      }
+    }
   };
 
   const handleDownloadFile = async (e) => {
@@ -248,40 +260,12 @@ export default function TransferDashboard({ transfer, addToast }) {
       return;
     }
     if (!receivedFileBlob && !receivedFileUrl) return;
-
-    if ('showSaveFilePicker' in window) {
-      try {
-        const ext = receivedFileName && receivedFileName.includes('.')
-          ? `.${receivedFileName.split('.').pop()}`
-          : undefined;
-        const handle = await window.showSaveFilePicker({
-          suggestedName: receivedFileName || 'downloaded-file',
-          types: receivedFileBlob?.type && ext
-            ? [{ description: 'Received file', accept: { [receivedFileBlob.type]: [ext] } }]
-            : undefined
-        });
-        const writable = await handle.createWritable();
-        if (receivedFileBlob) {
-          await writable.write(receivedFileBlob);
-        } else if (receivedFileUrl) {
-          const res = await fetch(receivedFileUrl);
-          const blob = await res.blob();
-          await writable.write(blob);
-        }
-        await writable.close();
-        if (addToast) addToast('success', 'File Saved', `Saved directly to disk: ${receivedFileName || 'file'}`);
-        return;
-      } catch (err) {
-        if (err.name === 'AbortError') return;
-      }
-    }
-
-    const a = document.createElement('a');
-    a.href = receivedFileUrl;
-    a.download = receivedFileName || 'downloaded-file';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => document.body.removeChild(a), 100);
+    await downloadReceivedItem({
+      name: receivedFileName || 'downloaded-file',
+      url: receivedFileUrl,
+      blob: receivedFileBlob,
+      type: receivedFileBlob?.type
+    });
   };
 
   const startSendWithFiles = (files) => {
@@ -355,12 +339,44 @@ export default function TransferDashboard({ transfer, addToast }) {
     return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + sizes[i];
   };
 
+  const formatEta = (seconds) => {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    if (total < 1) return 'Less than 1 sec remaining';
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const secs = total % 60;
+    const parts = [];
+    if (hours > 0) parts.push(`${hours} hr${hours === 1 ? '' : 's'}`);
+    if (minutes > 0) parts.push(`${minutes} min`);
+    if (secs > 0 || parts.length === 0) parts.push(`${secs} sec`);
+    return `${parts.join(' ')} remaining`;
+  };
+
   const handleCancel = () => {
     setInputCode('');
     cancelTransfer();
   };
 
+  const handleDone = () => {
+    setInputCode('');
+    if (typeof resetSession === 'function') {
+      resetSession();
+    } else {
+      cancelTransfer();
+    }
+  };
+
+  const handlePauseToggle = () => {
+    if (isPaused) {
+      if (typeof resumeTransfer === 'function') resumeTransfer();
+    } else if (typeof pauseTransfer === 'function') {
+      pauseTransfer();
+    }
+  };
+
   const isCompleted = engineState === 'completed';
+  const isCancelled = engineState === 'cancelled';
+  const isFailed = engineState === 'failed';
   const isSending = role === 'sender';
   const isReceiving = role === 'receiver';
   const archiveCount = Math.max(packedFileCount || 0, packedFiles.length, selectedFiles.length, 1);
@@ -379,33 +395,36 @@ export default function TransferDashboard({ transfer, addToast }) {
     : isPacking
     ? packProgress
     : (packProgress >= 100 && selectedFiles.length > 1 ? 100 : transferProgress);
+  const transferSucceeded = isCompleted || Boolean(receivedFileUrl) || Boolean(receivedFileBlob);
+  const activeTransfer = engineState === 'connected'
+    || engineState === 'transferring'
+    || engineState === 'completed'
+    || engineState === 'cancelled'
+    || (isFailed && (role === 'receiver' || role === 'sender') && (transferProgress > 0 || Boolean(receivedFileUrl) || Boolean(currentFileName)));
+  const hideToggle = activeTransfer || (selectedFiles.length > 0 && activeTab === 'send');
 
   const renderTransferProgressCard = () => {
     const percent = Math.round(progressPercent);
     const formattedTransferred = formatBytes(transferredBytes || totalBytes);
     const formattedTotal = formatBytes(totalBytes || selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0));
-    const itemCount = Math.max(packedFileCount || 0, packedFiles.length, selectedFiles.length, 1);
 
-    if (isCompleted) {
+    if (isCompleted || transferSucceeded) {
       return (
-        <div className="transfer-success-card-obsidian">
-          {/* Green Check Icon Badge */}
+        <div className="transfer-success-card-obsidian transfer-stage-card">
           <div className="success-icon-badge">
             <Check size={22} color="#10b981" strokeWidth={2.5} />
           </div>
 
-          {/* Subtitle & Title Header */}
           <div className="success-header-text">
             <div className="success-meta-tag">TRANSFER SUCCESS</div>
             <h3 className="success-title">Transfer Complete</h3>
             <p className="success-description">
-              Your file was transferred directly with zero loss.
+              {isIosDevice() && (receivedFileUrl || receivedFileBlob)
+                ? 'Tap Save to Files, then choose Save to Files. iPhone cannot open large files as a download link.'
+                : 'Your file was transferred directly with zero loss.'}
             </p>
           </div>
 
-
-
-          {/* Transferred File Item Card */}
           <div className="success-file-card">
             <div className="file-item-left">
               <div className="file-type-icon-box">
@@ -416,82 +435,138 @@ export default function TransferDashboard({ transfer, addToast }) {
             <span className="file-item-size">{formattedTotal}</span>
           </div>
 
-          {/* Action Buttons Below */}
           <div className="success-actions-row">
-            {receivedFileUrl ? (
+            {receivedFileUrl || receivedFileBlob ? (
               <button
                 type="button"
                 onClick={handleDownloadFile}
                 className="primary-glass-download-btn"
               >
-                <Download size={18} /> Download File
+                {isIosDevice() ? (
+                  <><Share2 size={18} /> Save to Files</>
+                ) : (
+                  <><Download size={18} /> Download File</>
+                )}
               </button>
-            ) : null}
-
-            {isSending ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="primary-glass-download-btn"
-                >
-                  Send More Files
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className="secondary-glass-done-btn"
-                >
-                  Done
-                </button>
-              </>
             ) : (
               <button
                 type="button"
-                onClick={handleCancel}
-                className="secondary-glass-done-btn"
+                onClick={handleDone}
+                className="primary-glass-download-btn"
               >
-                Done
+                Send More Files
               </button>
             )}
+            <button
+              type="button"
+              onClick={handleDone}
+              className="secondary-glass-done-btn"
+            >
+              Done
+            </button>
           </div>
         </div>
       );
     }
 
-    // Live Transfer View
-    const etaText = transfer.etaSeconds
-      ? `About ${transfer.etaSeconds} second${transfer.etaSeconds === 1 ? '' : 's'} remaining`
+    if (isCancelled) {
+      return (
+        <div className="transfer-progress-card-obsidian transfer-stage-card">
+          <div className="transfer-card-header">
+            <div className="transfer-file-info">
+              <div className="spinner-icon-box spinner-icon-box-stopped">
+                <X size={20} color="#ef4444" />
+              </div>
+              <div className="file-details">
+                <h4 className="file-title">Transfer cancelled</h4>
+                <div className="connection-subtitle">
+                  {activeName} was stopped on both devices.
+                </div>
+              </div>
+            </div>
+            <div className="transfer-metrics-right">
+              <div className="big-percent">{percent}%</div>
+              <div className="speed-text">STOPPED</div>
+            </div>
+          </div>
+
+          <div className="progress-bar-container">
+            <div
+              className="progress-bar-fill"
+              style={{ width: `${Math.max(2, Math.min(100, percent))}%`, opacity: 0.45 }}
+            />
+          </div>
+
+          <div className="transfer-submetrics-row">
+            <div className="transferred-mbs">
+              {formattedTransferred} of {formattedTotal} transferred
+            </div>
+            <div className="remaining-eta">Cancelled</div>
+          </div>
+
+          <div className="transfer-card-divider" />
+
+          <div className="transfer-actions-row">
+            <button
+              type="button"
+              onClick={handleDone}
+              className="transfer-ctrl-btn transfer-ctrl-pause"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const etaText = isPaused
+      ? 'Paused — transfer is frozen on both devices'
+      : engineState === 'failed'
+      ? 'Transfer interrupted'
+      : transfer.etaSeconds
+      ? formatEta(transfer.etaSeconds)
       : 'Calculating remaining time...';
 
+    const headline = engineState === 'failed'
+      ? `Could not transfer ${activeName}`
+      : isPaused
+      ? `Paused ${activeName}`
+      : `Transferring ${activeName}`;
+
+    const subtitle = engineState === 'failed'
+      ? (errorMessage || 'Transfer failed. You can try again with a new code.')
+      : isPaused
+      ? 'Paused on sender and receiver'
+      : engineState === 'connected'
+      ? 'Connected — starting transfer'
+      : 'Connected to peer device';
+
+    const canPause = engineState === 'transferring' || engineState === 'connected';
+
     return (
-      <div className="transfer-progress-card-obsidian">
-        {/* Top Header Row: Icon + File Name & Subtitle on Left, Big % & Speed on Right */}
+      <div className="transfer-progress-card-obsidian transfer-stage-card">
         <div className="transfer-card-header">
           <div className="transfer-file-info">
-            {/* Animated Spinner Icon Container */}
-            <div className="spinner-icon-box">
-              <span className="spinner-ring" />
+            <div className={`spinner-icon-box${isPaused || engineState === 'failed' ? ' spinner-icon-box-stopped' : ''}`}>
+              {engineState === 'failed' ? (
+                <X size={20} color="#ef4444" />
+              ) : (
+                <span className={`spinner-ring${isPaused ? ' is-paused' : ''}`} />
+              )}
             </div>
 
             <div className="file-details">
-              <h4 className="file-title">
-                {isSending ? `Sending ${activeName}` : `Receiving ${activeName}`}
-              </h4>
-              <div className="connection-subtitle">
-                Connected to {role === 'sender' ? 'Receiver Device' : 'Sender Device'}
-              </div>
+              <h4 className="file-title">{headline}</h4>
+              <div className="connection-subtitle">{subtitle}</div>
             </div>
           </div>
 
-          {/* Big % and Speed metrics */}
           <div className="transfer-metrics-right">
             <div className="big-percent">{percent}%</div>
-            <div className="speed-text">{transferSpeed || '0 MB/S'}</div>
+            <div className="speed-text">{isPaused ? 'PAUSED' : (transferSpeed || '0 MB/S')}</div>
           </div>
         </div>
 
-        {/* Progress Bar Track */}
         <div className="progress-bar-container">
           <div
             className="progress-bar-fill"
@@ -499,42 +574,56 @@ export default function TransferDashboard({ transfer, addToast }) {
           />
         </div>
 
-        {/* Metrics Row: Transferred MBs on Left, Remaining Time on Right */}
         <div className="transfer-submetrics-row">
           <div className="transferred-mbs">
             {formattedTransferred} of {formattedTotal} transferred
           </div>
-          <div className="remaining-eta">
-            {etaText}
-          </div>
+          <div className="remaining-eta">{etaText}</div>
         </div>
+
+        {engineState === 'failed' && errorMessage ? (
+          <div className="transfer-inline-error">
+            {errorMessage}
+          </div>
+        ) : null}
 
         <div className="transfer-card-divider" />
 
-        {/* Action Buttons Row */}
         <div className="transfer-actions-row">
-          <button
-            type="button"
-            onClick={() => setIsPaused(!isPaused)}
-            className="pause-btn-capsule"
-          >
-            <span className="pause-icon">{isPaused ? '▶' : '▌▌'}</span> {isPaused ? 'RESUME TRANSFER' : 'PAUSE TRANSFER'}
-          </button>
+          {engineState === 'failed' ? (
+            <button
+              type="button"
+              onClick={handleDone}
+              className="transfer-ctrl-btn transfer-ctrl-pause"
+            >
+              Done
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handlePauseToggle}
+                className={`transfer-ctrl-btn transfer-ctrl-pause${isPaused ? ' is-resume' : ''}`}
+                disabled={!canPause}
+              >
+                {isPaused ? <Play size={16} /> : <Pause size={16} />}
+                {isPaused ? 'Resume' : 'Pause'}
+              </button>
 
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="cancel-text-btn"
-          >
-            CANCEL TRANSFER
-          </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="transfer-ctrl-btn transfer-ctrl-cancel"
+              >
+                <X size={16} />
+                Cancel
+              </button>
+            </>
+          )}
         </div>
       </div>
     );
   };
-
-  const activeTransfer = engineState === 'connected' || engineState === 'transferring' || engineState === 'completed';
-  const hideToggle = activeTransfer || (selectedFiles.length > 0 && activeTab === 'send');
 
   return (
     <div style={{ position: 'relative', zIndex: 30, maxWidth: '680px', width: '100%', margin: '0 auto' }}>
@@ -624,22 +713,6 @@ export default function TransferDashboard({ transfer, addToast }) {
                     </p>
                   </label>
                 </div>
-              ) : isCompleted ? (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--glass-card-bg)', padding: '24px 16px', borderRadius: '16px', border: '1px solid var(--glass-card-border)', textAlign: 'center', gap: '10px' }}>
-                  <div style={{ width: '52px', height: '52px', borderRadius: '50%', background: 'rgba(16, 185, 129, 0.12)', border: '1.5px solid rgba(16, 185, 129, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10b981' }}>
-                    <Check size={26} />
-                  </div>
-                  <div>
-                    <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px' }}>
-                      {selectedFiles.length > 1 ? 'Zip Archive Delivered! 🎉' : 'File Delivered Successfully! 🎉'}
-                    </h4>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                      {selectedFiles.length > 1
-                        ? `${selectedFiles.length} files packed · ${formatBytes(selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0))}`
-                        : `${selectedFile?.name || 'File'} (${formatBytes(selectedFile?.size)})`}
-                    </p>
-                  </div>
-                </div>
               ) : (
                 /* Selected File: 6-Digit Connection Code Display (Using Glass PIN Track UI) */
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '8px 0' }}>
@@ -656,17 +729,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                       <div className="pin-group">
                         {(pairingCode || '---').slice(0, 3).split('').map((char, idx) => (
                           <div key={idx} className="pin-slot-wrapper">
-                            <div
-                              className="pin-slot-card white-group has-value"
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontWeight: 900,
-                                fontSize: '1.7rem',
-                                lineHeight: 1
-                              }}
-                            >
+                            <div className="pin-slot-card white-group has-value">
                               {char}
                             </div>
                             <span className="slot-indicator-dash white-dash active" />
@@ -675,25 +738,15 @@ export default function TransferDashboard({ transfer, addToast }) {
                       </div>
 
                       {/* Central Electric Lightning Icon */}
-                      <div className="pin-separator-icon" style={{ padding: '0 2px' }}>
-                        <Zap size={20} color="#3b82f6" className="zap-glow" />
+                      <div className="pin-separator-icon">
+                        <Zap className="zap-glow pin-zap-icon" color="#3b82f6" />
                       </div>
 
                       {/* Group 2: Digits 3, 4, 5 (Electric Blue Group) */}
                       <div className="pin-group">
                         {(pairingCode || '------').slice(3, 6).split('').map((char, idx) => (
                           <div key={idx} className="pin-slot-wrapper">
-                            <div
-                              className="pin-slot-card blue-group has-value"
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontWeight: 900,
-                                fontSize: '1.7rem',
-                                lineHeight: 1
-                              }}
-                            >
+                            <div className="pin-slot-card blue-group has-value">
                               {char}
                             </div>
                             <span className="slot-indicator-dash blue-dash active" />
@@ -716,6 +769,15 @@ export default function TransferDashboard({ transfer, addToast }) {
                     </span>
                   </div>
 
+                  <button
+                    type="button"
+                    onClick={handleDone}
+                    className="cancel-text-btn"
+                    style={{ marginTop: '16px' }}
+                  >
+                    Cancel
+                  </button>
+
                 </div>
               )}
             </div>
@@ -731,7 +793,7 @@ export default function TransferDashboard({ transfer, addToast }) {
                 <div style={{ display: 'flex', flexDirection: 'column', flex: 1, justifyContent: 'space-between' }}>
                   {/* Enter 6-Digit Code Header */}
                   <div style={{ textAlign: 'center', marginTop: '2px', marginBottom: '14px' }}>
-                    <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-title)', marginBottom: '4px', letterSpacing: '-0.02em' }}>
+                    <h3 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-title)', marginBottom: '4px', letterSpacing: '-0.02em' }}>
                       Enter 6-Digit Code
                     </h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', lineHeight: '1.4', maxWidth: '380px', margin: '0 auto' }}>
@@ -742,13 +804,19 @@ export default function TransferDashboard({ transfer, addToast }) {
                   {/* Top Status Pill Badge (Electric Blue for All States) */}
                   <div style={{ textAlign: 'center', marginBottom: '14px' }}>
                     <div className="code-pending-pill">
-                      {engineState === 'failed' ? (
+                      {engineState === 'failed' && !activeTransfer ? (
                         <>
-                          <X size={14} /> INVALID CODE — TRY AGAIN
+                          <X size={14} /> {errorMessage && /invalid session code/i.test(errorMessage)
+                            ? 'INVALID CODE — TRY AGAIN'
+                            : (errorMessage ? String(errorMessage).slice(0, 48).toUpperCase() : 'CONNECTION FAILED — TRY AGAIN')}
+                        </>
+                      ) : engineState === 'failed' ? (
+                        <>
+                          <X size={14} /> TRANSFER FAILED — TRY AGAIN
                         </>
                       ) : (engineState === 'connecting' || engineState === 'pairing') ? (
                         <>
-                          <span className="pulsing-dot-blue" /> CONNECTING TO SENDER...
+                          <span className="pulsing-dot-blue" /> {(connectionStatus || 'CONNECTING TO SENDER...').toUpperCase()}
                         </>
                       ) : (engineState === 'connected' || engineState === 'transferring') ? (
                         <>
@@ -793,8 +861,8 @@ export default function TransferDashboard({ transfer, addToast }) {
                       </div>
 
                       {/* Central Electric Lightning Icon */}
-                      <div className="pin-separator-icon" style={{ padding: '0 2px' }}>
-                        <Zap size={20} color="#3b82f6" className="zap-glow" />
+                      <div className="pin-separator-icon">
+                        <Zap className="zap-glow pin-zap-icon" color="#3b82f6" />
                       </div>
 
                       {/* Group 2: Digits 3, 4, 5 (Electric Blue Group) */}
@@ -821,6 +889,17 @@ export default function TransferDashboard({ transfer, addToast }) {
                       </div>
                     </div>
                   </div>
+                  {(engineState === 'connecting' || engineState === 'pairing' || engineState === 'failed') ? (
+                    <div style={{ textAlign: 'center', marginTop: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={handleDone}
+                        className="cancel-text-btn"
+                      >
+                        {engineState === 'failed' ? 'Try again' : 'Cancel'}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               )}
             </div>
