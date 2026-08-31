@@ -28,10 +28,10 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   const RAW_FRAME_OVERHEAD = 4; // plaintext frames: [index 4B][payload]
   const DEFAULT_CHUNK_SIZE = 64 * 1024;
   const MAX_CHUNK_SIZE = 256 * 1024;
-  const BUFFER_HIGH_WATERMARK = 16 * 1024 * 1024;
-  const BUFFER_LOW_WATERMARK = 4 * 1024 * 1024;
-  const BUFFER_HIGH_WATERMARK_MOBILE = 8 * 1024 * 1024;
-  const BUFFER_LOW_WATERMARK_MOBILE = 2 * 1024 * 1024;
+  const BUFFER_HIGH_WATERMARK = 8 * 1024 * 1024;
+  const BUFFER_LOW_WATERMARK = 2 * 1024 * 1024;
+  const BUFFER_HIGH_WATERMARK_MOBILE = 4 * 1024 * 1024;
+  const BUFFER_LOW_WATERMARK_MOBILE = 1 * 1024 * 1024;
   const PBKDF2_ITERATIONS = 10000;
   const METADATA_ACK_TIMEOUT_MS = 15000;
   const MAX_EARLY_CHUNK_QUEUE_SIZE = 400;
@@ -1615,12 +1615,30 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
       this.dataChannel.onclose = () => {
         console.log('[WebRTC Engine] DataChannel CLOSED');
-        if (this.isTransferring) {
+        if (this.isTransferring && this.transferState !== 'cancelled' && this.transferState !== 'completed') {
           this._handlePeerDisconnect('DataChannel closed unexpectedly during file transfer.');
         }
       };
 
       this.dataChannel.onerror = (err) => {
+        const errObj = err?.error || err;
+        const msg = errObj?.message || err?.message || String(errObj || '');
+        const reason = errObj?.reason || err?.reason || '';
+        const name = errObj?.name || '';
+
+        const isUserAbort =
+          this.transferState === 'cancelled' ||
+          this.transferState === 'completed' ||
+          !this.isTransferring ||
+          reason === 'Close called' ||
+          name === 'OperationError' ||
+          /user-initiated abort|close called|channel closed/i.test(msg) ||
+          /user-initiated abort|close called|channel closed/i.test(reason);
+
+        if (isUserAbort) {
+          console.log('[WebRTC Engine] DataChannel closed or aborted by user.');
+          return;
+        }
         console.error('[WebRTC Engine] DataChannel Error:', err);
       };
 
@@ -2613,14 +2631,34 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
           }
         }
 
-        await this._waitIfPaused();
-        if (!this.isTransferring) break;
+        let sentSuccess = false;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          if (!this.isTransferring || this.transferState === 'cancelled' || this.transferState === 'completed' || !this.dataChannel || this.dataChannel.readyState !== 'open') {
+            break;
+          }
+          try {
+            this.dataChannel.send(packet.frame);
+            sentSuccess = true;
+            break;
+          } catch (err) {
+            if (this.transferState === 'cancelled' || this.transferState === 'completed' || !this.isTransferring) {
+              break;
+            }
+            const isQueueFull = /queue|full|buffered|amount/i.test(err?.message || String(err));
+            if (isQueueFull && attempt < 4) {
+              console.warn(`[WebRTC Engine] Send queue full on chunk ${packet.index}. Waiting for buffer drain (attempt ${attempt + 1}/5)…`);
+              try {
+                await this._waitForBufferLow();
+              } catch (_) {}
+              continue;
+            }
+            this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
+            return;
+          }
+        }
 
-        try {
-          this.dataChannel.send(packet.frame);
-        } catch (err) {
-          this._handleTransferFailure(`Failed to send chunk frame: ${err.message}`, 'ERR_CHUNK_SEND');
-          return;
+        if (!sentSuccess && (this.transferState === 'cancelled' || this.transferState === 'completed' || !this.isTransferring)) {
+          break;
         }
 
         this._armStallTimer();
@@ -2898,7 +2936,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
   }
 
   // Export
-  if (typeof module !== 'undefined' && module.exports) {
+  if (typeof process !== 'undefined' && process.versions && process.versions.node && typeof module !== 'undefined' && module.exports) {
     module.exports = FluxWebRTCEngine;
     module.exports.default = FluxWebRTCEngine;
   }

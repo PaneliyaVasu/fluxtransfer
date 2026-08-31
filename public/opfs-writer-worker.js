@@ -3,6 +3,7 @@
  * 
  * Streams incoming decrypted file chunks directly to Origin Private File System (OPFS)
  * via FileSystemSyncAccessHandle, keeping RAM footprint near zero on large file receives.
+ * Supports non-destructive partial file preservation for resumable transfers.
  */
 
 let accessHandle = null;
@@ -10,17 +11,19 @@ let fileHandle = null;
 let fileName = null;
 
 self.onmessage = async function (e) {
-  const { type, fileName: fName, chunkIndex, offset, buffer, id } = e.data || {};
+  const { type, fileName: fName, transferId, isResume, chunkIndex, offset, buffer, id } = e.data || {};
 
   try {
     if (type === 'init') {
-      fileName = fName || `flux_received_${Date.now()}.bin`;
+      fileName = fName || (transferId ? `flux_partial_${transferId}.bin` : `flux_received_${Date.now()}.bin`);
       const root = await navigator.storage.getDirectory();
       fileHandle = await root.getFileHandle(fileName, { create: true });
       
       if (typeof fileHandle.createSyncAccessHandle === 'function') {
         accessHandle = await fileHandle.createSyncAccessHandle();
-        accessHandle.truncate(0);
+        if (!isResume) {
+          accessHandle.truncate(0);
+        }
       } else {
         throw new Error('FileSystemSyncAccessHandle is not supported in this browser worker');
       }
@@ -50,12 +53,20 @@ self.onmessage = async function (e) {
       const fileObj = await fileHandle.getFile();
       self.postMessage({ type: 'finalize-ack', id, file: fileObj, name: fileName });
 
+    } else if (type === 'preserve' || type === 'close-handle') {
+      if (accessHandle) {
+        try { accessHandle.flush(); } catch (_) {}
+        try { accessHandle.close(); } catch (_) {}
+        accessHandle = null;
+      }
+      self.postMessage({ type: 'preserve-ack', id });
+
     } else if (type === 'abort') {
       if (accessHandle) {
         try { accessHandle.close(); } catch (_) {}
         accessHandle = null;
       }
-      if (fileHandle) {
+      if (fileHandle && fileName) {
         try {
           const root = await navigator.storage.getDirectory();
           await root.removeEntry(fileName);
