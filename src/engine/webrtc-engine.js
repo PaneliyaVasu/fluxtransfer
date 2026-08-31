@@ -1747,7 +1747,6 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
         return;
       }
 
-      this._recvIncoming = [];
       this._recvDecryptInflight = 0;
       this._recvDecryptWaiters = [];
       this._recvCommitChain = Promise.resolve();
@@ -1757,16 +1756,14 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       this._speedSamples = [];
       this._lastProgressAck = 0;
 
+      const queued = this._earlyChunkQueue || [];
+      this._earlyChunkQueue = [];
+      this._recvIncoming = queued;
       this._receiverReady = true;
       this.onStatusChange(`Receiving file "${msg.name}" (${this._formatBytes(msg.size)})…`, 'info');
       this.onFileMetadata(msg);
       this._sendControlMessage({ type: 'metadata-ack', totalChunks: msg.totalChunks });
-
-      const queued = this._earlyChunkQueue || [];
-      this._earlyChunkQueue = null;
-      for (const frame of queued) {
-        this._enqueueReceiveFrame(frame);
-      }
+      this._drainReceiveIncoming();
     }
 
     async _tryInitOpfsStorage(msg) {
@@ -2020,12 +2017,20 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       }
     }
 
+    _coerceFrameBuffer(data) {
+      if (!data) return Promise.reject(new Error('Empty transfer frame'));
+      if (data instanceof ArrayBuffer) return Promise.resolve(data);
+      if (ArrayBuffer.isView(data)) {
+        return Promise.resolve(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+      }
+      if (typeof Blob !== 'undefined' && data instanceof Blob) {
+        return data.arrayBuffer();
+      }
+      return Promise.reject(new Error('Unsupported transfer frame type'));
+    }
+
     _decodeChunkFrame(frameBuffer) {
-      const buffer = frameBuffer instanceof ArrayBuffer
-        ? frameBuffer
-        : (ArrayBuffer.isView(frameBuffer)
-          ? frameBuffer.buffer.slice(frameBuffer.byteOffset, frameBuffer.byteOffset + frameBuffer.byteLength)
-          : frameBuffer);
+      const buffer = frameBuffer;
       if (this._e2ee === false) {
         if (!buffer || buffer.byteLength < RAW_FRAME_OVERHEAD) {
           return Promise.reject(new Error('Invalid transfer frame: undersized payload'));
@@ -2041,13 +2046,8 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
     _startReceiveDecrypt(data) {
       this._recvDecryptInflight += 1;
-      const buffer = data instanceof ArrayBuffer
-        ? data
-        : (ArrayBuffer.isView(data)
-          ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
-          : data);
-
-      const decryptPromise = this._decodeChunkFrame(buffer)
+      const decryptPromise = this._coerceFrameBuffer(data)
+        .then((buffer) => this._decodeChunkFrame(buffer))
         .finally(() => {
           this._recvDecryptInflight = Math.max(0, this._recvDecryptInflight - 1);
           const waiter = this._recvDecryptWaiters && this._recvDecryptWaiters.shift();
@@ -2316,8 +2316,12 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
       if (!Number.isFinite(maxMsg) || maxMsg <= overhead) {
         return DEFAULT_CHUNK_SIZE;
       }
-      const usable = Math.max(16 * 1024, maxMsg - overhead);
-      return Math.min(MAX_CHUNK_SIZE, usable);
+      const usable = Math.max(16 * 1024, maxMsg - overhead - 256);
+      let size = Math.min(MAX_CHUNK_SIZE, usable);
+      if (isMobileBrowser()) {
+        size = Math.min(size, 64 * 1024);
+      }
+      return size;
     }
 
     _scheduleIceRecovery() {
@@ -2813,6 +2817,7 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
     _handleTransferFailure(errorMessage, errorCode) {
       if (this._transferAlreadyDone && this._transferAlreadyDone()) return;
       if (this.transferState === 'completed' || this.transferState === 'cancelled') return;
+      console.error('[WebRTC Engine] Transfer failed:', errorCode || '', errorMessage);
       this.isTransferring = false;
       this._clearStallTimer();
       if (this._hashWaiters) {
