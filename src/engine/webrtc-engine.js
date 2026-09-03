@@ -1393,28 +1393,55 @@ if (typeof globalThis !== 'undefined' && !globalThis.FluxSoftwareCrypto) {
 
     async _reportConnectionType() {
       if (!this.pc || typeof this.pc.getStats !== 'function') {
-        this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+        this._connectionRoute = 'unknown';
+        this.onStatusChange('WebRTC P2P Connected ⚡', 'success');
         return;
       }
       try {
         const stats = await this.pc.getStats();
-        let isHostPair = false;
+        let localType = '';
+        let remoteType = '';
+        let foundPair = false;
+
         stats.forEach((report) => {
+          if (foundPair) return;
           if (report.type === 'candidate-pair' && report.state === 'succeeded') {
             const local = stats.get(report.localCandidateId);
             const remote = stats.get(report.remoteCandidateId);
-            if (local && remote && local.candidateType === 'host' && remote.candidateType === 'host') {
-              isHostPair = true;
+            if (local && remote) {
+              localType = local.candidateType || '';
+              remoteType = remote.candidateType || '';
+              foundPair = true;
             }
           }
         });
-        if (isHostPair) {
-          this.onStatusChange('WebRTC Direct Same-Network Connected ⚡ (LAN)', 'success');
+
+        const isRelay = localType === 'relay' || remoteType === 'relay';
+        const isHost = localType === 'host' && remoteType === 'host';
+
+        if (isRelay) {
+          this._connectionRoute = 'relay';
+          this.onStatusChange(
+            'Connected via TURN relay 🐢 — For faster speeds, connect both devices to the same Wi-Fi or Hotspot',
+            'warning'
+          );
+        } else if (isHost) {
+          this._connectionRoute = 'lan';
+          this.onStatusChange(
+            'Direct Same-Network Connected ⚡ (LAN — Maximum Speed)',
+            'success'
+          );
         } else {
-          this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+          this._connectionRoute = 'direct';
+          this.onStatusChange(
+            'WebRTC Direct P2P Connected ⚡',
+            'success'
+          );
         }
+        console.log(`[WebRTC Engine] Connection route: local=${localType}, remote=${remoteType}, route=${this._connectionRoute}`);
       } catch (_) {
-        this.onStatusChange('WebRTC Direct P2P Connected ⚡', 'success');
+        this._connectionRoute = 'unknown';
+        this.onStatusChange('WebRTC P2P Connected ⚡', 'success');
       }
     }
 
